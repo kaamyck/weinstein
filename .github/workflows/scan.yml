@@ -1,24 +1,52 @@
-name: Weinstein Weekly Scan
+name: Update Weinstein data
+
 on:
+  workflow_dispatch:
   schedule:
-    - cron: '0 12 * * 6'
-  workflow_dispatch: {}
+    - cron: "0 7 * * 1-5"
+
 permissions:
   contents: write
+
 jobs:
-  scan:
+  update-data:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
-      - run: pip install yfinance pandas lxml
-      - run: python weinstein_scan.py
-      - name: Zapisz data.json
+          python-version: "3.11"
+
+      - name: Install dependencies
         run: |
-          git config user.name  "github-actions"
-          git config user.email "actions@github.com"
+          python -m pip install --upgrade pip
+          pip install yfinance pandas lxml html5lib beautifulsoup4
+
+      - name: Run Weinstein scanner
+        run: |
+          python weinstein_scan.py --batch 5 --pause 3
+
+      - name: Check data.json is not empty
+        run: |
+          python - <<'PY'
+          import json
+          with open("data.json", "r", encoding="utf-8") as f:
+              d = json.load(f)
+          stocks = d.get("stocks", [])
+          print("COUNT:", d.get("meta", {}).get("count"))
+          print("STOCKS:", len(stocks))
+          if len(stocks) == 0:
+              raise SystemExit("BŁĄD: data.json ma 0 spółek — nie publikuję pustego pliku.")
+          PY
+
+      - name: Commit and push data.json
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
           git add data.json
-          git commit -m "skan $(date -u +%F)" || echo "brak zmian"
+          git commit -m "Update data.json" || echo "No changes to commit"
           git push
