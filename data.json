@@ -1,1 +1,1 @@
-{"meta": {"lastUpdate": "2026-06-01 13:22", "universe": "S&P 500 + Nasdaq 100", "count": 0}, "market": {"spy": {"price": 756.48, "change": 1.45, "aboveSMA30": true}, "qqq": {"price": 738.31, "change": 2.89, "aboveSMA30": true}}, "stocks": []}
+{"meta": {"lastUpdate": "2026-06-01 13:42", "universe": "S&P 500 + Nasdaq 100", "count": 0}, "market": {"spy": {"price": 756.2, "change": -0.04, "aboveSMA30": true}, "qqq": {"price": 738.93, "change": 0.08, "aboveSMA30": true}}, "stocks": []}
