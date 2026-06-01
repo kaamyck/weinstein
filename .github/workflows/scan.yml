@@ -32,8 +32,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install yfinance pandas lxml html5lib beautifulsoup4
-
+pip install yfinance pandas lxml html5lib beautifulsoup4 requests
       - name: Run Weinstein scanner full universe
         run: |
           python weinstein_scan.py --batch 5 --pause 3 --debug
