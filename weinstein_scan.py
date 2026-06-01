@@ -1,102 +1,66 @@
 # weinstein_scan.py
-# v4 — paczki po 5 spółek + odporne extract() + ponawianie pojedynczo
-#
-# Instalacja:
-# pip install yfinance pandas lxml
-#
-# Uruchomienie:
-# python3 weinstein_scan.py
-#
-# Test:
-# python3 weinstein_scan.py --limit 10
-#
-# Wolniej, bezpieczniej dla Yahoo:
-# python3 weinstein_scan.py --batch 5 --pause 2.5
+# v5 — GitHub Actions friendly
+# Naprawia problem: Wikipedia 403 Forbidden na GitHub Actions
+# Pobiera S&P 500 + Nasdaq-100, analizuje po 5 spółek, zapisuje data.json
 
 import json
 import time
 import argparse
 import sys
 from datetime import datetime
+from io import StringIO
 
+import requests
 import pandas as pd
 import yfinance as yf
 
 
-# =========================
-# USTAWIENIA MODELU
-# =========================
-
 T = {
-    "minVol": 1.5,          # breakout volume min. 1.5x średniej
-    "maxBase": 22.0,        # maksymalna szerokość bazy w %
-    "pivotZone": 3.0,       # cena max 3% nad pivotem
-    "maxRisk": 8.0,         # ryzyko do stopa max 8%
-    "mansfieldMin": 0.0     # Mansfield > 0
+    "minVol": 1.5,
+    "maxBase": 22.0,
+    "pivotZone": 3.0,
+    "maxRisk": 8.0,
+    "mansfieldMin": 0.0
 }
 
-FLAT = 0.3          # próg "płaskiej" SMA30, w %
-MIN_WEEKS = 60      # minimum historii do liczenia Mansfielda i SMA
-BATCH = 5           # domyślnie analizuje po 5 spółek
-PAUSE = 2.0         # przerwa między paczkami
-RETRIES = 3         # liczba prób pobrania danych
-
+FLAT = 0.3
+MIN_WEEKS = 60
+BATCH = 5
+PAUSE = 3.0
+RETRIES = 3
 
 SECTOR_ETF = {
     "Technology": "XLK",
     "Information Technology": "XLK",
-
     "Communication Services": "XLC",
-
     "Consumer Cyclical": "XLY",
     "Consumer Discretionary": "XLY",
-
     "Consumer Defensive": "XLP",
     "Consumer Staples": "XLP",
-
     "Financial Services": "XLF",
     "Financials": "XLF",
-
     "Energy": "XLE",
-
     "Healthcare": "XLV",
     "Health Care": "XLV",
-
     "Industrials": "XLI",
-
     "Basic Materials": "XLB",
     "Materials": "XLB",
-
     "Real Estate": "XLRE",
-
     "Utilities": "XLU",
 }
 
 ETFS = sorted(set(SECTOR_ETF.values()))
 
 
-# =========================
-# FUNKCJE POMOCNICZE
-# =========================
-
 def sma(s, p):
     return s.rolling(p).mean()
 
 
 def classify_stage(price, sma_now, sma_prev):
-    """
-    Klasyfikacja wg uproszczonej logiki Stan Weinstein:
-    Stage 2: cena nad SMA30, SMA30 rośnie
-    Stage 4: cena pod SMA30, SMA30 spada
-    Stage 3: cena nad SMA30, ale trend SMA30 już nie jest wzrostowy
-    Stage 1: cena pod SMA30, ale trend SMA30 już nie jest spadkowy
-    """
-
     if pd.isna(sma_now) or pd.isna(sma_prev) or sma_prev == 0:
         return None, None
 
     slope = (sma_now - sma_prev) / sma_prev * 100
-
     above = price > sma_now
     rising = slope > FLAT
     falling = slope < -FLAT
@@ -113,108 +77,33 @@ def classify_stage(price, sma_now, sma_prev):
     return stage, rising
 
 
-def download(tickers, tries=RETRIES, **kwargs):
-    """
-    Pobiera dane z Yahoo Finance.
-    Celowo: threads=False, małe paczki, retry z przerwą.
-    """
+def read_html_with_headers(url):
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Connection": "keep-alive",
+    }
 
-    for attempt in range(tries):
-        try:
-            df = yf.download(
-                tickers,
-                progress=False,
-                threads=False,
-                **kwargs
-            )
+    r = requests.get(url, headers=headers, timeout=30)
+    r.raise_for_status()
 
-            if df is not None and not df.empty:
-                return df
-
-        except Exception as e:
-            print(f"UWAGA: błąd pobierania {tickers}: {type(e).__name__}: {str(e)[:100]}")
-
-        sleep_time = 2 + attempt * 2
-        time.sleep(sleep_time)
-
-    return None
-
-
-def extract(df, ticker):
-    """
-    Wyciąga dane OHLCV dla jednego tickera niezależnie od tego,
-    czy yfinance zwróci:
-    - zwykły DataFrame dla jednego tickera,
-    - MultiIndex ticker -> OHLCV,
-    - MultiIndex OHLCV -> ticker.
-
-    To jest kluczowa poprawka, bo poprzednia wersja często kończyła
-    z pustym stocks[].
-    """
-
-    if df is None or df.empty:
-        return None
-
-    ticker = str(ticker).upper().strip()
-
-    try:
-        if isinstance(df.columns, pd.MultiIndex):
-            level0 = [str(x).upper() for x in df.columns.get_level_values(0)]
-            level1 = [str(x).upper() for x in df.columns.get_level_values(1)]
-
-            # Układ: ticker / OHLCV
-            if ticker in level0:
-                sub = df.xs(ticker, axis=1, level=0)
-
-            # Układ: OHLCV / ticker
-            elif ticker in level1:
-                sub = df.xs(ticker, axis=1, level=1)
-
-            else:
-                return None
-
-        else:
-            # Zwykły DataFrame dla pojedynczego tickera
-            sub = df.copy()
-
-        # Ujednolicenie nazw kolumn
-        sub.columns = [str(c).strip().title() for c in sub.columns]
-
-        needed = ["Open", "High", "Low", "Close", "Volume"]
-        missing = [c for c in needed if c not in sub.columns]
-
-        if missing:
-            return None
-
-        sub = sub[needed].copy()
-        sub = sub.dropna()
-
-        if len(sub) == 0:
-            return None
-
-        return sub
-
-    except Exception:
-        return None
+    return pd.read_html(StringIO(r.text))
 
 
 def get_universe():
-    """
-    Pobiera uniwersum:
-    - S&P 500
-    - Nasdaq-100
-
-    Zwraca:
-    tickers, names, sectors
-    """
-
     tickers = set()
     names = {}
     sectors = {}
 
-    # S&P 500
     try:
-        tables = pd.read_html("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")
+        tables = read_html_with_headers(
+            "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+        )
 
         for tbl in tables:
             sym_col = next((c for c in tbl.columns if "Symbol" in str(c)), None)
@@ -235,14 +124,16 @@ def get_universe():
                 names[t] = str(row[name_col]) if name_col else t
                 sectors[t] = str(row[sector_col]) if sector_col else ""
 
+            print(f"Pobrano S&P 500: {len(tickers)} tickerów")
             break
 
     except Exception as e:
         print("UWAGA: nie pobrano listy S&P 500:", e)
 
-    # Nasdaq-100
     try:
-        tables = pd.read_html("https://en.wikipedia.org/wiki/Nasdaq-100")
+        tables = read_html_with_headers(
+            "https://en.wikipedia.org/wiki/Nasdaq-100"
+        )
 
         best = None
 
@@ -266,6 +157,8 @@ def get_universe():
                 None
             )
 
+            before = len(tickers)
+
             for _, row in tbl.iterrows():
                 t = str(row[sym_col]).replace(".", "-").strip().upper()
 
@@ -280,6 +173,8 @@ def get_universe():
                 if t not in sectors:
                     sectors[t] = ""
 
+            print(f"Pobrano Nasdaq-100: +{len(tickers) - before} nowych tickerów")
+
     except Exception as e:
         print("UWAGA: nie pobrano listy Nasdaq-100:", e)
 
@@ -287,11 +182,6 @@ def get_universe():
 
 
 def fill_missing_sectors(tickers, sectors):
-    """
-    Dociąga sektor dla spółek, które nie mają go z Wikipedii.
-    Głównie dotyczy Nasdaq-100 spoza S&P 500.
-    """
-
     missing = [t for t in tickers if not sectors.get(t)]
     filled = 0
 
@@ -301,18 +191,71 @@ def fill_missing_sectors(tickers, sectors):
             sectors[t] = info.get("sector") or ""
             filled += 1
             time.sleep(0.15)
-
         except Exception:
             sectors[t] = ""
 
     return filled
 
 
-def weekly_metrics(wk, spy_close):
-    """
-    Liczy metryki tygodniowe dla jednej spółki.
-    """
+def download(tickers, tries=RETRIES, **kwargs):
+    for attempt in range(tries):
+        try:
+            df = yf.download(
+                tickers,
+                progress=False,
+                threads=False,
+                **kwargs
+            )
 
+            if df is not None and not df.empty:
+                return df
+
+        except Exception as e:
+            print(f"UWAGA: błąd pobierania {tickers}: {type(e).__name__}: {str(e)[:100]}")
+
+        time.sleep(2 + attempt * 2)
+
+    return None
+
+
+def extract(df, ticker):
+    if df is None or df.empty:
+        return None
+
+    ticker = str(ticker).upper().strip()
+
+    try:
+        if isinstance(df.columns, pd.MultiIndex):
+            level0 = [str(x).upper() for x in df.columns.get_level_values(0)]
+            level1 = [str(x).upper() for x in df.columns.get_level_values(1)]
+
+            if ticker in level0:
+                sub = df.xs(ticker, axis=1, level=0)
+            elif ticker in level1:
+                sub = df.xs(ticker, axis=1, level=1)
+            else:
+                return None
+        else:
+            sub = df.copy()
+
+        sub.columns = [str(c).strip().title() for c in sub.columns]
+
+        needed = ["Open", "High", "Low", "Close", "Volume"]
+        missing = [c for c in needed if c not in sub.columns]
+
+        if missing:
+            return None
+
+        sub = sub[needed].copy()
+        sub = sub.dropna()
+
+        return sub if len(sub) else None
+
+    except Exception:
+        return None
+
+
+def weekly_metrics(wk, spy_close):
     if wk is None or len(wk) < MIN_WEEKS:
         return None
 
@@ -341,7 +284,6 @@ def weekly_metrics(wk, spy_close):
     if stage is None:
         return None
 
-    # Mansfield względem SPY
     spy = spy_close.reindex(close.index, method="ffill")
 
     if spy is None or len(spy.dropna()) < MIN_WEEKS:
@@ -360,7 +302,6 @@ def weekly_metrics(wk, spy_close):
     else:
         rs_prev = mansfield
 
-    # Pivot: najwyższy high z poprzednich 20 tygodni, bez bieżącego tygodnia
     if len(high) < 22:
         return None
 
@@ -371,7 +312,6 @@ def weekly_metrics(wk, spy_close):
 
     dist_to_pivot = (price - pivot) / pivot * 100
 
-    # Baza: szerokość z ostatnich 12 tygodni
     base_low = float(low.iloc[-12:].min())
     base_high = float(high.iloc[-12:].max())
 
@@ -380,7 +320,6 @@ def weekly_metrics(wk, spy_close):
 
     base = (base_high - base_low) / base_low * 100
 
-    # Wolumen wybicia
     vol_avg = float(vol.iloc[-21:-1].mean())
 
     if vol_avg <= 0 or pd.isna(vol_avg):
@@ -388,20 +327,17 @@ def weekly_metrics(wk, spy_close):
     else:
         breakout_vol = float(vol.iloc[-1] / vol_avg)
 
-    # Zmiana 1W
     if len(close) >= 2 and close.iloc[-2] != 0:
         change_1w = float((close.iloc[-1] / close.iloc[-2] - 1) * 100)
     else:
         change_1w = 0.0
 
-    # Stop: ostatni swing low z 6 tygodni
     swing_low = float(low.iloc[-6:].min())
 
     if swing_low <= 0:
         return None
 
     risk = max(0.1, (price - swing_low) / price * 100)
-
     stop_loss = price * (1 - risk / 100)
 
     return {
@@ -431,16 +367,12 @@ def weekly_metrics(wk, spy_close):
 
 
 def adr_from_daily(dly):
-    """
-    ADR% z ostatnich 14 sesji.
-    ADR = średni dzienny zakres High/Low.
-    """
-
     if dly is None or len(dly) < 14:
         return None
 
     try:
-        rng = ((dly["High"] / dly["Low"] - 1) * 100).replace([float("inf"), -float("inf")], pd.NA)
+        rng = ((dly["High"] / dly["Low"] - 1) * 100)
+        rng = rng.replace([float("inf"), -float("inf")], pd.NA)
         adr = float(rng.iloc[-14:].mean())
 
         if pd.isna(adr):
@@ -453,10 +385,6 @@ def adr_from_daily(dly):
 
 
 def weekly_series(wk, n=110):
-    """
-    Dane świec tygodniowych do wykresu frontowego.
-    """
-
     out = []
 
     if wk is None or wk.empty:
@@ -472,7 +400,6 @@ def weekly_series(wk, n=110):
                 "c": round(float(row["Close"]), 2),
                 "v": round(float(row["Volume"]) / 1e6, 2)
             })
-
         except Exception:
             continue
 
@@ -480,11 +407,6 @@ def weekly_series(wk, n=110):
 
 
 def gate(s):
-    """
-    Finalna decyzja:
-    KUP / CZEKAJ / NIE KUPUJ
-    """
-
     d = s["distToPivot"]
 
     if (
@@ -509,10 +431,6 @@ def gate(s):
 
 
 def market_block(c):
-    """
-    Prosty blok rynku dla SPY/QQQ.
-    """
-
     s30 = sma(c, 30)
 
     return {
@@ -522,39 +440,13 @@ def market_block(c):
     }
 
 
-# =========================
-# MAIN
-# =========================
-
 def main():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument(
-        "--limit",
-        type=int,
-        default=0,
-        help="Ogranicz liczbę tickerów do testu, np. --limit 10"
-    )
-
-    parser.add_argument(
-        "--batch",
-        type=int,
-        default=BATCH,
-        help="Rozmiar paczki. Domyślnie 5."
-    )
-
-    parser.add_argument(
-        "--pause",
-        type=float,
-        default=PAUSE,
-        help="Przerwa między paczkami. Domyślnie 2 sekundy."
-    )
-
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="Pokazuje więcej informacji diagnostycznych."
-    )
+    parser.add_argument("--limit", type=int, default=0)
+    parser.add_argument("--batch", type=int, default=BATCH)
+    parser.add_argument("--pause", type=float, default=PAUSE)
+    parser.add_argument("--debug", action="store_true")
 
     args = parser.parse_args()
 
@@ -566,26 +458,25 @@ def main():
     print(f"Przerwa: {pause_s}s")
     print("=========================\n")
 
-    # 1. Uniwersum
     tickers, names, sectors = get_universe()
 
     print(f"Uniwersum: {len(tickers)} spółek — S&P 500 + Nasdaq-100")
 
-    if len(tickers) < 400:
-        print("UWAGA: lista wygląda na niekompletną. Sprawdź połączenie albo strukturę Wikipedii.")
+    if len(tickers) == 0:
+        print("BŁĄD: uniwersum ma 0 spółek. Nie ma czego analizować.")
 
-    # 2. Sektory dla brakujących spółek
+    if len(tickers) < 400:
+        print("UWAGA: lista wygląda na niekompletną.")
+
     n_filled = fill_missing_sectors(tickers, sectors)
 
     if n_filled:
         print(f"Dociągnięto sektor dla {n_filled} spółek.")
 
-    # 3. Limit testowy
     if args.limit:
         tickers = tickers[:args.limit]
         print(f"Tryb testowy: analizuję tylko {len(tickers)} spółek.")
 
-    # 4. Indeksy i ETF-y sektorowe
     print("\nPobieram SPY, QQQ i ETF-y sektorowe...")
 
     index_symbols = ["SPY", "QQQ"] + ETFS
@@ -612,11 +503,9 @@ def main():
     try:
         spy_close = wk_close("SPY")
         qqq_close = wk_close("QQQ")
-
     except Exception as e:
         sys.exit(f"BŁĄD: nie udało się wyciągnąć SPY/QQQ: {e}")
 
-    # 5. Trend sektorów
     sector_trend = {}
 
     for etf in ETFS:
@@ -642,7 +531,6 @@ def main():
 
     print("Trend sektorów:", sector_trend)
 
-    # 6. Analiza spółek
     stocks = []
     too_short = []
     errors = []
@@ -672,14 +560,10 @@ def main():
             group_by="ticker"
         )
 
-        if args.debug and wk is not None:
-            print("DEBUG weekly columns:", wk.columns)
-
         for ticker in batch:
             try:
                 wkt = extract(wk, ticker)
 
-                # Jeżeli paczka nie oddała tej spółki — ponawiamy pojedynczo.
                 if wkt is None:
                     print(f"  {ticker}: brak danych w paczce, ponawiam pojedynczo...")
 
@@ -712,7 +596,6 @@ def main():
                 dlt = extract(dly, ticker)
                 adr = adr_from_daily(dlt)
 
-                # Awaryjne ADR z danych tygodniowych
                 if adr is None:
                     try:
                         weekly_range = (wkt["High"].iloc[-4:] / wkt["Low"].iloc[-4:] - 1) * 100
@@ -759,8 +642,6 @@ def main():
 
         time.sleep(pause_s)
 
-    # 7. Sortowanie
-    # Najpierw KUP, potem CZEKAJ, potem NIE KUPUJ.
     order = {
         "KUP": 0,
         "CZEKAJ": 1,
@@ -776,14 +657,13 @@ def main():
         )
     )
 
-    # 8. JSON
     data = {
         "meta": {
             "lastUpdate": datetime.now().strftime("%Y-%m-%d %H:%M"),
             "universe": "S&P 500 + Nasdaq 100",
             "count": len(stocks),
             "batch": batch_size,
-            "model": "Weinstein Scanner v4"
+            "model": "Weinstein Scanner v5"
         },
         "settings": T,
         "market": {
@@ -797,7 +677,6 @@ def main():
     with open("data.json", "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False)
 
-    # 9. Raport końcowy
     counts = {
         "KUP": 0,
         "CZEKAJ": 0,
