@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Weinstein Weekend Screener</title>
+<style>
+  html,body{margin:0;background:#070a0f;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;}
+  #root{min-height:100vh;color:#d6e0f0;}
+  input[type=range]{accent-color:#16d98a;}
+  ::-webkit-scrollbar{height:10px;width:10px;}
+  ::-webkit-scrollbar-thumb{background:#1b2431;border-radius:5px;}
+  a{cursor:pointer;}
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js"></script>
+</head>
+<body>
+<div id="root" style="padding:20px;color:#69788f;font-family:monospace">Ładowanie dashboardu…</div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useMemo, useRef, useEffect } = React;
+
+/* ===================== KOLORY ===================== */
+const C = {
+  bg:"#070a0f", panel:"#0b111b", panelAlt:"#0e1521", head:"#0a1019",
+  border:"#1a2231", b:"#1b2431", bb:"#26344a", grid:"#141d2a",
+  row:"#0f1826", rowAlt:"#0a1019", sel:"#15273b",
+  txt:"#d6e0f0", mid:"#9fb0c9", dim:"#69788f", faint:"#46546b",
+  green:"#16d98a", red:"#ff4d5e", yellow:"#ffcf3a", blue:"#3d7dff", cyan:"#35cfe0",
+  smaY:"#f5c542", smaB:"#3d7dff", smaG:"#15c47e",
+};
+const vColor = (v) => v==="KUP"?C.green:v==="CZEKAJ"?C.yellow:C.red;
+const DEFAULTS = { minVol:1.5, maxBase:22, pivotZone:3, maxRisk:8, mansfieldMin:0 };
+const PL=["Sty","Lut","Mar","Kwi","Maj","Cze","Lip","Sie","Wrz","Paź","Lis","Gru"];
+
+/* ===================== SILNIK DECYZYJNY ===================== */
+function gate(s,t,market){
+  const dist=s.distToPivot;
+  const marketOK=market.spy.aboveSMA30 && market.qqq.aboveSMA30;
+  const checks={
+    stage2:{ok:s.stage===2,v:`Stage ${s.stage}`,label:"Stage 2 (cena > SMA30W rosnąca)"},
+    above:{ok:s.priceAboveSMA30,v:s.priceAboveSMA30?"TAK":"NIE",label:"Cena > SMA30W"},
+    smaRising:{ok:s.sma30Rising,v:s.sma30Rising?"TAK":"NIE",label:"SMA30W rośnie"},
+    rs:{ok:s.mansfield>t.mansfieldMin&&s.mansfieldRising,v:s.mansfield.toFixed(2),label:`Mansfield RS > ${t.mansfieldMin} i rośnie`},
+    zone:{ok:dist>=0&&dist<=t.pivotZone,v:`${dist>=0?"+":""}${dist.toFixed(2)}%`,label:`W strefie wybicia (0…+${t.pivotZone}%)`},
+    volume:{ok:s.breakoutVol>=t.minVol,v:`${s.breakoutVol.toFixed(2)}×`,label:`Wolumen wybicia ≥ ${t.minVol}×`},
+    base:{ok:s.base<=t.maxBase,v:`${s.base.toFixed(1)}%`,label:`Baza ≤ ${t.maxBase}%`},
+    risk:{ok:s.riskToStop<=t.maxRisk,v:`${s.riskToStop.toFixed(1)}%`,label:`Ryzyko do stopu ≤ ${t.maxRisk}%`},
+    market:{ok:marketOK,v:marketOK?"OK":"RYZYKO",label:"Rynek (SPY i QQQ) > SMA30"},
+    sector:{ok:s.sectorTrend!=="OFF",v:s.sectorTrend,label:"Sektor ON lub neutralny"},
+  };
+  const disq=!checks.stage2.ok||!checks.above.ok||s.mansfield<t.mansfieldMin;
+  let verdict;
+  if(disq) verdict="NIE KUPUJ";
+  else verdict=Object.values(checks).every(c=>c.ok)?"KUP":"CZEKAJ";
+  return {verdict,checks,dist,marketOK};
+}
+const cap=(x)=>x?x.charAt(0).toUpperCase()+x.slice(1):x;
+function reasonText(s,res,t){
+  const c=res.checks;
+  if(res.verdict==="KUP") return "Spełnia wszystkie warunki wejścia — Stage 2, wybicie z wolumenem";
+  const r=[];
+  if(res.verdict==="NIE KUPUJ"){
+    if(!c.stage2.ok) r.push("poza Stage 2");
+    if(!c.above.ok) r.push("poniżej SMA30W");
+    if(s.mansfield<t.mansfieldMin) r.push("słaby RS (Mansfield < 0)");
+    if(s.sectorTrend==="OFF") r.push("sektor OFF");
+    return cap(r.slice(0,2).join(", "))||"Setup zdyskwalifikowany";
+  }
+  if(!c.zone.ok) r.push(res.dist<0?"przed wybiciem (pod pivotem)":"cena uciekła nad pivot");
+  if(!c.volume.ok) r.push("słaby wolumen wybicia");
+  if(!c.base.ok) r.push("baza za szeroka");
+  if(!c.risk.ok) r.push("ryzyko do stopu za duże");
+  if(!c.sector.ok) r.push("sektor OFF");
+  if(!c.smaRising.ok) r.push("SMA30W nie rośnie");
+  return cap(r.slice(0,2).join(", "))||"Dobra struktura, brak triggera";
+}
+
+/* ===================== MATH ===================== */
+function sma(arr,p){const out=new Array(arr.length).fill(null);let sum=0;for(let i=0;i<arr.length;i++){sum+=arr[i];if(i>=p)sum-=arr[i-p];if(i>=p-1)out[i]=sum/p;}return out;}
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+function hashSeed(str){let h=2166136261;for(let i=0;i<str.length;i++){h^=str.charCodeAt(i);h=Math.imul(h,16777619);}return h>>>0;}
+function genSeries(fix){
+  const N=104,rnd=mulberry32(hashSeed(fix.ticker)),end=fix.price;
+  let sr;
+  if(fix.stage===2) sr=0.42+rnd()*0.15;
+  else if(fix.stage===4) sr=1.85+rnd()*0.5;
+  else sr=0.82+rnd()*0.22;
+  const start=end*sr,k=3+(hashSeed(fix.ticker)%3),closes=[];
+  for(let i=0;i<N;i++){const t=i/(N-1),s=t*t*t*(t*(t*6-15)+10);let b=start+(end-start)*s;b*=1+Math.sin(t*Math.PI*k)*0.045;b*=1+(rnd()-0.5)*0.05;closes.push(b);}
+  closes[N-1]=end;
+  const rows=[];const now=Date.now();let prevC=closes[0];
+  for(let i=0;i<N;i++){
+    const c=closes[i];const o=i===0?c*(1+(rnd()-0.5)*0.01):prevC;const rng=c*(0.012+rnd()*0.03);
+    const hi=Math.max(o,c)+rng*rnd(),lo=Math.min(o,c)-rng*rnd();
+    let vol=5+rnd()*6;
+    if(fix.stage===2&&i>N-6) vol*=1+(i-(N-6))*0.28;
+    if(i===N-1&&fix.breakoutVol) vol*=Math.max(1,fix.breakoutVol/1.3);
+    rows.push({ts:now-(N-1-i)*7*864e5,o,h:hi,l:lo,c,v:vol});prevC=c;
+  }
+  return rows;
+}
+
+/* ===================== FIXTURES (demo) ===================== */
+const F=[
+  ["NVDA","NVIDIA Corporation","XLK",948.71,2.21,18.45,1,"ON",2.31,11.2,3.8,5.4,930.5,2,1,1],
+  ["META","Meta Platforms, Inc.","XLC",485.25,1.67,13.21,1,"ON",1.98,13.6,3.1,5.1,478.0,2,1,1],
+  ["MSFT","Microsoft Corporation","XLK",415.38,1.20,9.67,1,"ON",1.82,12.7,2.6,4.6,410.0,2,1,1],
+  ["AMD","Advanced Micro Devices","XLK",168.90,3.10,14.90,1,"ON",2.05,16.8,4.5,6.8,164.9,2,1,1],
+  ["JPM","JPMorgan Chase & Co.","XLF",214.60,1.05,5.80,1,"ON",1.65,10.5,1.9,4.2,211.0,2,1,1],
+  ["PLTR","Palantir Technologies","XLK",28.40,4.20,22.10,1,"ON",2.80,20.5,6.5,7.5,27.68,2,1,1],
+  ["AVGO","Broadcom Inc.","XLK",1521.10,-0.18,11.35,1,"ON",1.22,17.9,2.8,6.2,1513.5,2,1,1],
+  ["GOOGL","Alphabet Inc. Class A","XLC",168.15,0.58,6.73,1,"ON",1.17,18.3,2.9,6.4,169.0,2,1,1],
+  ["AAPL","Apple Inc.","XLK",212.40,0.40,4.10,1,"ON",1.30,15.0,2.2,5.5,213.0,2,1,1],
+  ["COST","Costco Wholesale","XLP",905.10,0.65,7.20,1,"NEU",1.10,12.0,2.0,5.8,902.0,2,1,1],
+  ["GM","General Motors Company","XLY",83.24,0.73,8.07,1,"OFF",1.03,24.1,6.2,8.9,84.12,2,1,1],
+  ["AMZN","Amazon.com, Inc.","XLY",184.65,-0.73,-2.15,0,"ON",0.88,22.7,3.5,7.8,189.0,1,0,0],
+  ["TSLA","Tesla, Inc.","XLY",174.58,-1.90,-7.32,0,"OFF",0.65,27.4,6.1,10.2,182.0,4,0,0],
+  ["NFLX","Netflix, Inc.","XLC",621.45,-0.49,-3.48,0,"OFF",0.96,23.1,3.6,8.1,640.0,4,0,0],
+  ["XOM","Exxon Mobil Corporation","XLE",108.30,-1.20,-4.50,0,"OFF",0.80,19.5,2.6,7.0,114.0,4,0,0],
+  ["INTC","Intel Corporation","XLK",30.45,-2.11,-12.77,0,"OFF",0.58,30.3,5.2,11.7,33.0,4,0,0],
+].map((a)=>{
+  const [ticker,name,sector,price,change1W,mansfield,mr,sectorTrend,breakoutVol,base,adr,riskToStop,pivot,stage,pa,sr]=a;
+  const distToPivot=(price-pivot)/pivot*100;
+  const fix={ticker,name,sector,price,change1W,mansfield,mansfieldRising:!!mr,sectorTrend,breakoutVol,base,adr,riskToStop,pivot,distToPivot,stage,
+    priceAboveSMA30:!!pa,sma30Rising:!!sr,
+    sma10:price*(stage===2?0.985:1.04),sma30:price*(stage===2?0.95:1.10),sma40:price*(stage===2?0.93:1.14),
+    stopLoss:price*(1-riskToStop/100)};
+  fix.weekly=genSeries(fix);return fix;
+});
+const DEMO={
+  meta:{lastUpdate:"DEMO (dane przykładowe)",universe:"S&P 500 + Nasdaq 100",count:F.length},
+  market:{spy:{price:579.43,change:0.48,aboveSMA30:true},qqq:{price:503.62,change:0.78,aboveSMA30:true}},
+  stocks:F,
+};
+
+/* ===================== WYKRES (duży, pełna szerokość, krzyżyk) ===================== */
+function CandleChart({stock}){
+  const svgRef=useRef(null);
+  const [hover,setHover]=useState(null);
+  const series=(stock.weekly&&stock.weekly.length>30)?stock.weekly:genSeries(stock);
+  const N=series.length;
+  const closes=series.map(d=>d.c);
+  const sma10=sma(closes,10),sma30=sma(closes,30),sma40=sma(closes,40);
+  const rsRaw=closes.map((c,i)=>sma30[i]==null?null:(c/sma30[i]-1)*100*4);
+  const lastRs=rsRaw[N-1]??0,shift=stock.mansfield-lastRs;
+  const mans=rsRaw.map(v=>v==null?null:v+shift);
+
+  const W=1200,H=700,pT=18,pB=430,vT=448,vB=540,mT=558,mB=662,L=8,R=1100,lab=1108;
+  const x=(i)=>L+(i/(N-1))*(R-L);
+  const cw=Math.max(2,(R-L)/N*0.64);
+  let hi=-Infinity,lo=Infinity;
+  series.forEach(d=>{hi=Math.max(hi,d.h);lo=Math.min(lo,d.l);});
+  hi=Math.max(hi,stock.pivot);lo=Math.min(lo,stock.pivot);
+  const padv=(hi-lo)*0.06;hi+=padv;lo-=padv;
+  const yP=(v)=>pB-(v-lo)/(hi-lo)*(pB-pT);
+  const maxV=Math.max(...series.map(d=>d.v));
+  const avgV=series.slice(-20).reduce((s,d)=>s+d.v,0)/Math.min(20,N);
+  const yV=(v)=>vB-v/maxV*(vB-vT);
+  const mVals=mans.filter(v=>v!=null);
+  let mHi=Math.max(0,...mVals),mLo=Math.min(0,...mVals);
+  const mpad=(mHi-mLo)*0.1||1;mHi+=mpad;mLo-=mpad;
+  const yM=(v)=>mB-(v-mLo)/(mHi-mLo)*(mB-mT);
+  const path=(arr,yf)=>arr.map((v,i)=>v==null?null:`${i===0||arr[i-1]==null?"M":"L"}${x(i).toFixed(1)} ${yf(v).toFixed(1)}`).filter(Boolean).join(" ");
+  const last=series[N-1];const up=last.c>=last.o;
+  const ticks=[];for(let i=0;i<N;i+=13)ticks.push(i);
+  const priceLines=[];for(let i=0;i<=5;i++)priceLines.push(lo+(hi-lo)*i/5);
+
+  // odsuwanie nachodzących etykiet po prawej
+  const LBL=[{y:yP(last.c),t:last.c.toFixed(2),bg:C.smaB},
+             sma30[N-1]!=null&&{y:yP(sma30[N-1]),t:sma30[N-1].toFixed(2),bg:C.cyan},
+             sma40[N-1]!=null&&{y:yP(sma40[N-1]),t:sma40[N-1].toFixed(2),bg:C.smaG}].filter(Boolean).sort((a,b)=>a.y-b.y);
+  const LH=17;
+  for(let i=1;i<LBL.length;i++) if(LBL[i].y-LBL[i-1].y<LH) LBL[i].y=LBL[i-1].y+LH;
+  for(let i=LBL.length-1;i>=0;i--){ if(LBL[i].y>pB) LBL[i].y=pB; if(i>0&&LBL[i-1].y>LBL[i].y-LH) LBL[i-1].y=LBL[i].y-LH; }
+
+  const onMove=(e)=>{
+    const svg=svgRef.current; if(!svg) return;
+    const r=svg.getBoundingClientRect();
+    const vx=(e.clientX-r.left)/r.width*W;
+    let i=Math.round((vx-L)/(R-L)*(N-1));
+    i=Math.max(0,Math.min(N-1,i));
+    setHover(i);
+  };
+
+  let readout=null;
+  if(hover!=null){
+    const hv=series[hover],d=new Date(hv.ts),hup=hv.c>=hv.o;
+    const ds=`${d.getDate()} ${PL[d.getMonth()]} ${d.getFullYear()}`;
+    readout=(
+      <g>
+        <line x1={x(hover)} y1={pT} x2={x(hover)} y2={mB} stroke={C.mid} strokeWidth="1" strokeDasharray="2 3" opacity="0.55"/>
+        <line x1={L} y1={yP(hv.c)} x2={R} y2={yP(hv.c)} stroke={C.mid} strokeWidth="1" strokeDasharray="2 3" opacity="0.35"/>
+        <circle cx={x(hover)} cy={yP(hv.c)} r="3.5" fill={C.cyan}/>
+        <rect x={L+250} y={pT+2} width="360" height="21" fill="#0a0f18" stroke={C.b} rx="3"/>
+        <text x={L+260} y={pT+17} fontSize="12">
+          <tspan fill={C.txt} fontWeight="700">{ds}</tspan>
+          <tspan fill={C.dim}>{"   O "}</tspan><tspan fill={C.mid}>{hv.o.toFixed(2)}</tspan>
+          <tspan fill={C.dim}>{"  C "}</tspan><tspan fill={hup?C.green:C.red}>{hv.c.toFixed(2)}</tspan>
+          <tspan fill={C.dim}>{"  Vol "}</tspan><tspan fill={C.mid}>{hv.v.toFixed(1)}M</tspan>
+          <tspan fill={C.dim}>{"  RS "}</tspan><tspan fill={(mans[hover]??0)>=0?C.green:C.red}>{(mans[hover]??0).toFixed(2)}</tspan>
+        </text>
+      </g>
+    );
+  }
+
+  return (
+    <svg ref={svgRef} onMouseMove={onMove} onMouseLeave={()=>setHover(null)} viewBox={`0 0 ${W} ${H}`} style={{width:"100%",height:"auto",display:"block"}} fontFamily="ui-monospace, monospace">
+      {priceLines.map((v,i)=>(<g key={i}><line x1={L} y1={yP(v)} x2={R} y2={yP(v)} stroke={C.grid} strokeWidth="1"/><text x={lab} y={yP(v)+3} fill={C.dim} fontSize="10">{v.toFixed(2)}</text></g>))}
+      <line x1={L} y1={yP(stock.pivot)} x2={R} y2={yP(stock.pivot)} stroke={C.mid} strokeWidth="1" strokeDasharray="6 4" opacity="0.8"/>
+      <text x={L+4} y={yP(stock.pivot)-4} fill={C.mid} fontSize="10">Pivot (20W High): {stock.pivot.toFixed(2)}</text>
+      {series.map((d,i)=>{const u=d.c>=d.o,col=u?C.green:C.red;const bt=yP(Math.max(d.o,d.c)),bb=yP(Math.min(d.o,d.c));return(<g key={i}><line x1={x(i)} y1={yP(d.h)} x2={x(i)} y2={yP(d.l)} stroke={col} strokeWidth="1"/><rect x={x(i)-cw/2} y={bt} width={cw} height={Math.max(1,bb-bt)} fill={col}/></g>);})}
+      <path d={path(sma40,yP)} fill="none" stroke={C.smaG} strokeWidth="1.6" opacity="0.95"/>
+      <path d={path(sma30,yP)} fill="none" stroke={C.smaB} strokeWidth="2"/>
+      <path d={path(sma10,yP)} fill="none" stroke={C.smaY} strokeWidth="1.6" opacity="0.95"/>
+      {LBL.map((l,i)=>(<g key={i}><rect x={lab-2} y={l.y-8} width="76" height="15" fill={l.bg} rx="2"/><text x={lab+2} y={l.y+3} fill="#02060d" fontSize="10" fontWeight="700">{l.t}</text></g>))}
+      <g fontSize="12">
+        <text x={L+4} y={pT+15} fill={C.txt} fontWeight="700">{stock.ticker} — WYKRES TYGODNIOWY</text>
+        <text x={L+4} y={pT+32} fill={up?C.green:C.red}>C {last.c.toFixed(2)} {up?"+":""}{(last.c-series[N-2].c).toFixed(2)} ({up?"+":""}{stock.change1W.toFixed(2)}%)</text>
+        <g transform={`translate(${L+4}, ${pT+50})`} fontSize="11">
+          <line x1="0" y1="0" x2="16" y2="0" stroke={C.smaY} strokeWidth="2"/><text x="20" y="3" fill={C.smaY}>SMA 10</text>
+          <line x1="82" y1="0" x2="98" y2="0" stroke={C.smaB} strokeWidth="2"/><text x="102" y="3" fill={C.smaB}>SMA 30</text>
+          <line x1="164" y1="0" x2="180" y2="0" stroke={C.smaG} strokeWidth="2"/><text x="184" y="3" fill={C.smaG}>SMA 40</text>
+        </g>
+      </g>
+      <text x={L+4} y={vT+11} fill={C.mid} fontSize="10">Wolumen — Śr(20): {avgV.toFixed(1)}M</text>
+      {series.map((d,i)=>(<rect key={i} x={x(i)-cw/2} y={yV(d.v)} width={cw} height={Math.max(1,vB-yV(d.v))} fill={d.c>=d.o?C.green:C.red} opacity="0.55"/>))}
+      <line x1={L} y1={yV(avgV)} x2={R} y2={yV(avgV)} stroke={C.yellow} strokeWidth="1" strokeDasharray="4 3" opacity="0.7"/>
+      <text x={L+4} y={mT+11} fill={C.mid} fontSize="10">Mansfield RS (vs SPY): {stock.mansfield.toFixed(2)}</text>
+      <line x1={L} y1={yM(0)} x2={R} y2={yM(0)} stroke={C.faint} strokeWidth="1" strokeDasharray="3 3"/>
+      <text x={lab} y={yM(0)+3} fill={C.faint} fontSize="9">0</text>
+      <path d={path(mans,yM)} fill="none" stroke={stock.mansfield>=0?C.green:C.red} strokeWidth="1.8"/>
+      {ticks.map((i)=>{const dt=new Date(series[i].ts),m=PL[dt.getMonth()];return(<g key={i}><line x1={x(i)} y1={mB} x2={x(i)} y2={mB+4} stroke={C.faint}/><text x={x(i)} y={mB+17} fill={C.dim} fontSize="10" textAnchor="middle">{dt.getMonth()===0?dt.getFullYear():m}</text></g>);})}
+      {readout}
+    </svg>
+  );
+}
+
+/* ===================== HEADER TABELI ===================== */
+function Th({children,k,sortKey,sortDir,onSort,w,right,center,stickyLeft,bg,z,br}){
+  const active=sortKey===k;
+  const st={padding:"6px 8px",fontSize:10,color:active?C.txt:C.dim,fontWeight:700,textAlign:center?"center":right?"right":"left",whiteSpace:"nowrap",cursor:k?"pointer":"default",userSelect:"none",borderBottom:`1px solid ${C.b}`,letterSpacing:".3px"};
+  if(w){st.width=w;st.minWidth=w;}
+  if(stickyLeft!=null){st.position="sticky";st.left=stickyLeft;st.background=bg||C.head;st.zIndex=z||3;}
+  if(br) st.borderRight=`2px solid ${C.bb}`;
+  return <th onClick={k?()=>onSort(k):undefined} style={st}>{children}{active?(sortDir==="asc"?" ▲":" ▼"):""}</th>;
+}
+const Grp=({children,span,sticky,br})=>{
+  const st={padding:"4px 8px",fontSize:9,color:C.faint,fontWeight:700,textAlign:"center",letterSpacing:"1px",borderBottom:`1px solid ${C.grid}`,background:C.head,textTransform:"uppercase"};
+  if(sticky){st.position="sticky";st.left=0;st.zIndex=4;}
+  if(br) st.borderRight=`2px solid ${C.bb}`;
+  return <th colSpan={span} style={st}>{children}</th>;
+};
+
+/* ===================== APP ===================== */
+function App(){
+  const [data,setData]=useState(DEMO);
+  const [t,setT]=useState(DEFAULTS);
+  const [filter,setFilter]=useState("ALL");
+  const [sortKey,setSortKey]=useState(null);
+  const [sortDir,setSortDir]=useState("desc");
+  const [sel,setSel]=useState(DEMO.stocks[0].ticker);
+  const [showSettings,setShowSettings]=useState(false);
+  const [showLoad,setShowLoad]=useState(false);
+  const [raw,setRaw]=useState("");
+  const [err,setErr]=useState("");
+  const [source,setSource]=useState("demo");
+  const fileRef=useRef(null);
+  const detailRef=useRef(null);
+
+  useEffect(()=>{
+    fetch("./data.json",{cache:"no-store"})
+      .then(r=>r.ok?r.json():Promise.reject())
+      .then(j=>{
+        if(j&&Array.isArray(j.stocks)&&j.stocks.length){
+          setData({meta:j.meta||{lastUpdate:"wczytane",universe:"",count:j.stocks.length},market:j.market,stocks:j.stocks});
+          setSel(j.stocks[0].ticker);setSource("live");
+        }
+      }).catch(()=>{});
+  },[]);
+
+  const evaluated=useMemo(()=>data.stocks.map(s=>{
+    const fix={...s};
+    if(fix.distToPivot==null&&fix.pivot) fix.distToPivot=(fix.price-fix.pivot)/fix.pivot*100;
+    const res=gate(fix,t,data.market);
+    return {...fix,...res,reason:reasonText(fix,res,t),inZone:fix.distToPivot>=-2&&fix.distToPivot<=t.pivotZone};
+  }),[data,t]);
+
+  const counts=useMemo(()=>{const c={KUP:0,CZEKAJ:0,"NIE KUPUJ":0};evaluated.forEach(s=>c[s.verdict]++);return c;},[evaluated]);
+
+  const view=useMemo(()=>{
+    let arr=evaluated;
+    if(filter!=="ALL") arr=arr.filter(s=>s.verdict===filter);
+    if(sortKey){arr=[...arr].sort((a,b)=>{let av=a[sortKey],bv=b[sortKey];if(typeof av==="string")return sortDir==="asc"?av.localeCompare(bv):bv.localeCompare(av);return sortDir==="asc"?av-bv:bv-av;});}
+    return arr;
+  },[evaluated,filter,sortKey,sortDir]);
+
+  const staleDays=useMemo(()=>{
+    const m=String(data.meta.lastUpdate||"").match(/(\d{4})-(\d{2})-(\d{2})/);
+    if(!m) return null;
+    return Math.floor((Date.now()-new Date(+m[1],+m[2]-1,+m[3]).getTime())/86400000);
+  },[data]);
+  const stale=staleDays!=null&&staleDays>8;
+
+  const selStock=evaluated.find(s=>s.ticker===sel)||evaluated[0];
+  const onSort=(k)=>{if(sortKey===k)setSortDir(sortDir==="asc"?"desc":"asc");else{setSortKey(k);setSortDir("desc");}};
+  const handleSelect=(tk)=>{setSel(tk);setTimeout(()=>{if(detailRef.current)detailRef.current.scrollIntoView({behavior:"smooth",block:"start"});},0);};
+
+  const loadJSON=(text)=>{
+    try{
+      const j=JSON.parse(text);
+      if(!j.stocks||!Array.isArray(j.stocks)) throw new Error("Brak tablicy 'stocks'");
+      if(!j.market||!j.market.spy) throw new Error("Brak obiektu 'market.spy'");
+      setData({meta:j.meta||{lastUpdate:"wczytane",count:j.stocks.length},market:j.market,stocks:j.stocks});
+      setSel(j.stocks[0].ticker);setErr("");setShowLoad(false);setSource("live");
+    }catch(e){setErr("Błąd: "+e.message);}
+  };
+  const onFile=(e)=>{const f=e.target.files&&e.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>loadJSON(String(r.result));r.readAsText(f);};
+
+  const overall=data.market.spy.aboveSMA30&&data.market.qqq.aboveSMA30?"OK":"RYZYKO";
+  const mkt=(m)=>(
+    <div style={{display:"flex",alignItems:"baseline",gap:8}}>
+      <span style={{color:C.mid,fontSize:12,width:34}}>{m.k}</span>
+      <span style={{color:C.txt,fontSize:15,fontWeight:700}}>{m.price.toFixed(2)}</span>
+      <span style={{color:m.change>=0?C.green:C.red,fontSize:12}}>{m.change>=0?"▲":"▼"} {Math.abs(m.change).toFixed(2)}%</span>
+      <span style={{color:m.aboveSMA30?C.green:C.red,fontSize:10}}>({m.aboveSMA30?"NAD SMA30":"POD SMA30"})</span>
+    </div>
+  );
+  const Row=({label,value,color})=>(
+    <div style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:11.5,borderBottom:`1px solid ${C.grid}`}}>
+      <span style={{color:C.dim}}>{label}</span><span style={{color:color||C.txt,fontWeight:600}}>{value}</span>
+    </div>
+  );
+  const cellBase=(bg)=>({padding:"5px 8px",fontSize:11,borderBottom:`1px solid ${C.grid}`});
+  const sb=(left,bg,br)=>{const o={position:"sticky",left,background:bg,zIndex:1,borderBottom:`1px solid ${C.grid}`};if(br)o.borderRight=`2px solid ${C.bb}`;return o;};
+
+  return (
+    <div style={{background:C.bg,color:C.txt,padding:10,minHeight:"100%"}}>
+      {/* HEADER */}
+      <div style={{display:"flex",flexWrap:"wrap",gap:8,alignItems:"stretch",marginBottom:8}}>
+        <div style={{flex:"1 1 320px",background:C.head,border:`1px solid ${C.b}`,borderRadius:4,padding:"8px 12px"}}>
+          <div style={{fontSize:17,fontWeight:800,letterSpacing:".5px"}}>WEINSTEIN WEEKEND SCREENER <span style={{color:C.green}}>v4.1</span></div>
+          <div style={{fontSize:10.5,color:C.dim,marginTop:3}}>Universe: {data.meta.universe||"—"} &nbsp;|&nbsp; Dane: Weekly &nbsp;|&nbsp; Scan: {data.meta.count} spółek &nbsp;|&nbsp; Update: {data.meta.lastUpdate}</div>
+          <div style={{fontSize:10,marginTop:3,color:source==="live"?C.green:C.dim}}>{source==="live"?"● LIVE — dane z data.json":"● DEMO — czekam na data.json (auto po wdrożeniu)"}</div>
+        </div>
+        <div style={{display:"flex",border:`1px solid ${C.b}`,borderRadius:4,overflow:"hidden"}}>
+          {[["KUP",C.green],["CZEKAJ",C.yellow],["NIE KUPUJ",C.red]].map(([k,col])=>(
+            <button key={k} onClick={()=>setFilter(filter===k?"ALL":k)} style={{background:filter===k?"#141c28":C.head,border:"none",borderLeft:`1px solid ${C.b}`,padding:"8px 16px",cursor:"pointer",textAlign:"center"}}>
+              <div style={{color:col,fontSize:10.5,fontWeight:700}}>{k}</div>
+              <div style={{color:col,fontSize:22,fontWeight:800,lineHeight:1}}>{counts[k]}</div>
+            </button>
+          ))}
+        </div>
+        <div style={{background:C.head,border:`1px solid ${C.b}`,borderRadius:4,padding:"6px 14px",display:"flex",flexDirection:"column",justifyContent:"center",gap:2}}>
+          <div style={{fontSize:10,color:C.dim,fontWeight:700}}>RYNEK</div>
+          {mkt({k:"SPY",...data.market.spy})}
+          {mkt({k:"QQQ",...data.market.qqq})}
+        </div>
+        <div style={{background:C.head,border:`1px solid ${C.b}`,borderRadius:4,padding:"6px 16px",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
+          <div style={{fontSize:10,color:C.dim,fontWeight:700}}>OGÓLNY RYNEK</div>
+          <div style={{fontSize:24,fontWeight:800,color:overall==="OK"?C.green:C.red}}>{overall}</div>
+        </div>
+      </div>
+
+      {/* TOOLBAR */}
+      <div style={{display:"flex",gap:8,marginBottom:8,flexWrap:"wrap"}}>
+        {["ALL","KUP","CZEKAJ","NIE KUPUJ"].map(f=>(
+          <button key={f} onClick={()=>setFilter(f)} style={{background:filter===f?"#16202e":C.panel,color:f==="ALL"?C.txt:vColor(f),border:`1px solid ${filter===f?vColor(f==="ALL"?"KUP":f):C.b}`,borderRadius:4,padding:"5px 12px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>{f==="ALL"?"WSZYSTKIE":f}</button>
+        ))}
+        <div style={{flex:1}}/>
+        <button onClick={()=>setShowSettings(!showSettings)} style={{background:showSettings?"#16202e":C.panel,color:C.mid,border:`1px solid ${C.b}`,borderRadius:4,padding:"5px 12px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>⚙ KRYTERIA</button>
+        <button onClick={()=>setShowLoad(!showLoad)} style={{background:showLoad?"#16202e":C.panel,color:C.cyan,border:`1px solid ${C.b}`,borderRadius:4,padding:"5px 12px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>⤓ DANE</button>
+      </div>
+
+      {/* OSTRZEŻENIE O ŚWIEŻOŚCI */}
+      {stale&&(
+        <div style={{background:"#2a230a",border:`1px solid ${C.yellow}`,color:C.yellow,borderRadius:4,padding:"7px 12px",marginBottom:8,fontSize:11.5}}>
+          ⚠ Dane sprzed {staleDays} dni — uruchom skan (workflow „Run workflow" w GitHub Actions), aby je odświeżyć.
+        </div>
+      )}
+
+      {showSettings&&(
+        <div style={{background:C.panel,border:`1px solid ${C.b}`,borderRadius:4,padding:12,marginBottom:8,display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:14}}>
+          {[["minVol","Min. wolumen wybicia",1,3,0.1,"×"],["maxBase","Max. szerokość bazy",10,40,0.5,"%"],["pivotZone","Szerokość strefy wybicia",1,8,0.5,"%"],["maxRisk","Max. ryzyko do stopu",3,15,0.5,"%"]].map(([k,lbl,min,max,step,u])=>(
+            <div key={k}>
+              <div style={{fontSize:11,color:C.mid,marginBottom:4,display:"flex",justifyContent:"space-between"}}><span>{lbl}</span><span style={{color:C.green,fontWeight:700}}>{t[k]}{u}</span></div>
+              <input type="range" min={min} max={max} step={step} value={t[k]} onChange={(e)=>setT({...t,[k]:parseFloat(e.target.value)})} style={{width:"100%"}}/>
+            </div>
+          ))}
+          <div style={{gridColumn:"1/-1",fontSize:10.5,color:C.dim}}>Zmiana suwaka natychmiast przelicza werdykty całej tabeli. Twarde dyskwalifikatory (poza Stage 2, poniżej SMA30W, Mansfield&lt;0) są stałe — to fundament strategii.</div>
+        </div>
+      )}
+
+      {showLoad&&(
+        <div style={{background:C.panel,border:`1px solid ${C.b}`,borderRadius:4,padding:12,marginBottom:8}}>
+          <div style={{fontSize:11.5,color:C.mid,marginBottom:6}}>Wklej zawartość <b style={{color:C.cyan}}>data.json</b> albo wczytaj plik (zwykle niepotrzebne — dane wczytują się automatycznie):</div>
+          <textarea value={raw} onChange={(e)=>setRaw(e.target.value)} placeholder='{ "meta": {...}, "market": {...}, "stocks": [...] }' style={{width:"100%",height:90,background:C.bg,color:C.txt,border:`1px solid ${C.b}`,borderRadius:4,padding:8,fontFamily:"inherit",fontSize:11,resize:"vertical",boxSizing:"border-box"}}/>
+          <div style={{display:"flex",gap:8,marginTop:8,alignItems:"center"}}>
+            <button onClick={()=>loadJSON(raw)} style={{background:C.green,color:"#02060d",border:"none",borderRadius:4,padding:"6px 14px",fontSize:11,fontWeight:700,cursor:"pointer"}}>Wczytaj JSON</button>
+            <button onClick={()=>fileRef.current&&fileRef.current.click()} style={{background:C.panel,color:C.cyan,border:`1px solid ${C.b}`,borderRadius:4,padding:"6px 14px",fontSize:11,fontWeight:700,cursor:"pointer"}}>Wczytaj plik…</button>
+            <input ref={fileRef} type="file" accept=".json,application/json" onChange={onFile} style={{display:"none"}}/>
+            {err&&<span style={{color:C.red,fontSize:11}}>{err}</span>}
+          </div>
+        </div>
+      )}
+
+      {/* TABELA SKANERA */}
+      <div style={{border:`1px solid ${C.b}`,borderRadius:4,overflowX:"auto",marginBottom:8}}>
+        <table style={{borderCollapse:"separate",borderSpacing:0,width:"100%",minWidth:1140}}>
+          <thead>
+            <tr>
+              <Grp span={3} sticky br>Spółka</Grp>
+              <Grp span={6} br>Trend / Siła</Grp>
+              <Grp span={4} br>Jakość setupu</Grp>
+              <Grp span={2}>Akcja / Notatki</Grp>
+            </tr>
+            <tr style={{background:C.head}}>
+              <Th w={30} stickyLeft={0}>#</Th>
+              <Th k="ticker" sortKey={sortKey} sortDir={sortDir} onSort={onSort} w={70} stickyLeft={30}>SPÓŁKA</Th>
+              <Th k="verdict" sortKey={sortKey} sortDir={sortDir} onSort={onSort} w={86} stickyLeft={100} br>DECYZJA</Th>
+              <Th k="price" sortKey={sortKey} sortDir={sortDir} onSort={onSort} right>CENA</Th>
+              <Th k="change1W" sortKey={sortKey} sortDir={sortDir} onSort={onSort} right>ZM. 1W</Th>
+              <Th center>STREFA</Th>
+              <Th k="stage" sortKey={sortKey} sortDir={sortDir} onSort={onSort} center>STAGE</Th>
+              <Th k="mansfield" sortKey={sortKey} sortDir={sortDir} onSort={onSort} right>MANSFIELD</Th>
+              <Th center br>SEKTOR</Th>
+              <Th k="breakoutVol" sortKey={sortKey} sortDir={sortDir} onSort={onSort} right>VOL</Th>
+              <Th k="base" sortKey={sortKey} sortDir={sortDir} onSort={onSort} right>BAZA</Th>
+              <Th k="adr" sortKey={sortKey} sortDir={sortDir} onSort={onSort} right>ADR%</Th>
+              <Th k="riskToStop" sortKey={sortKey} sortDir={sortDir} onSort={onSort} right br>RYZYKO</Th>
+              <Th center w={48}>TV</Th>
+              <Th w={200}>POWÓD</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {view.length===0?(
+              <tr><td colSpan={15} style={{padding:"30px 12px",textAlign:"center",color:C.dim,fontSize:12,borderBottom:`1px solid ${C.grid}`}}>
+                Brak spółek{filter!=="ALL"?` z werdyktem „${filter}"`:""}.{" "}
+                <button onClick={()=>setFilter("ALL")} style={{background:C.panel,color:C.cyan,border:`1px solid ${C.b}`,borderRadius:4,padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer",marginLeft:6}}>Pokaż wszystkie</button>
+              </td></tr>
+            ):view.map((s,i)=>{
+              const isSel=s.ticker===sel;
+              const bg=isSel?C.sel:(i%2?C.rowAlt:C.row);
+              return (
+                <tr key={s.ticker} onClick={()=>handleSelect(s.ticker)} style={{background:bg,cursor:"pointer"}}>
+                  <td style={{...sb(0,bg),padding:"5px 8px",fontSize:11,color:C.faint}}>{i+1}</td>
+                  <td style={{...sb(30,bg),padding:"4px 8px"}}>
+                    <div style={{fontWeight:800,fontSize:12,color:C.txt}}>{s.ticker}</div>
+                    <div style={{fontSize:9,color:C.dim,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:62}}>{s.name}</div>
+                  </td>
+                  <td style={{...sb(100,bg,true),padding:"5px 8px",fontSize:11,fontWeight:800,color:vColor(s.verdict),whiteSpace:"nowrap"}}>{s.verdict}</td>
+                  <td style={{...cellBase(),textAlign:"right",color:C.txt}}>{s.price.toFixed(2)}</td>
+                  <td style={{...cellBase(),textAlign:"right",color:s.change1W>=0?C.green:C.red}}>{s.change1W>=0?"▲":"▼"} {Math.abs(s.change1W).toFixed(2)}</td>
+                  <td style={{...cellBase(),textAlign:"center",fontWeight:700,color:s.inZone?C.green:C.red}}>{s.inZone?"TAK":"NIE"}</td>
+                  <td style={{...cellBase(),textAlign:"center",fontWeight:700,color:s.stage===2?C.green:s.stage===4?C.red:C.yellow}}>{s.stage}</td>
+                  <td style={{...cellBase(),textAlign:"right",color:s.mansfield>=0?C.green:C.red}}>{s.mansfield.toFixed(2)}</td>
+                  <td style={{...cellBase(),textAlign:"center",fontWeight:700,color:s.sectorTrend==="ON"?C.green:s.sectorTrend==="OFF"?C.red:C.yellow,borderRight:`2px solid ${C.bb}`}}>{s.sectorTrend}</td>
+                  <td style={{...cellBase(),textAlign:"right",color:s.breakoutVol>=t.minVol?C.green:C.red}}>{s.breakoutVol>=t.minVol?"✓":"✕"} {s.breakoutVol.toFixed(2)}×</td>
+                  <td style={{...cellBase(),textAlign:"right",color:s.base<=t.maxBase?C.green:C.red}}>{s.base<=t.maxBase?"✓":"✕"} {s.base.toFixed(1)}%</td>
+                  <td style={{...cellBase(),textAlign:"right",color:C.mid}}>{s.adr.toFixed(1)}%</td>
+                  <td style={{...cellBase(),textAlign:"right",color:s.riskToStop<=t.maxRisk?C.green:C.red,borderRight:`2px solid ${C.bb}`}}>{s.riskToStop<=t.maxRisk?"✓":"✕"} {s.riskToStop.toFixed(1)}%</td>
+                  <td style={{...cellBase(),textAlign:"center"}}>
+                    <a href={`https://www.tradingview.com/symbols/${s.ticker}/`} target="_blank" rel="noopener noreferrer" onClick={(e)=>e.stopPropagation()} style={{color:C.cyan,textDecoration:"none",fontSize:10,fontWeight:700,border:`1px solid ${C.b}`,borderRadius:3,padding:"2px 6px"}}>TV ↗</a>
+                  </td>
+                  <td style={{...cellBase(),color:C.dim,fontSize:10.5,maxWidth:220}}>{s.reason}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div style={{fontSize:10,color:C.dim,marginBottom:12,padding:"0 4px"}}>
+        <b style={{color:C.green}}>KUP</b> = spełnia wszystkie warunki &nbsp;·&nbsp; <b style={{color:C.yellow}}>CZEKAJ</b> = dobra spółka, brak momentu &nbsp;·&nbsp; <b style={{color:C.red}}>NIE KUPUJ</b> = setup odrzucony &nbsp;·&nbsp; <b style={{color:C.cyan}}>✓ / ✕</b> = czy próg spełniony &nbsp;·&nbsp; kliknij wiersz → szczegóły + wykres poniżej.
+      </div>
+
+      {/* STREFA SZCZEGÓŁÓW: PASEK "DLACZEGO" + DUŻY WYKRES */}
+      <div ref={detailRef}>
+        <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:8}}>
+          {/* identity + komentarz + stop */}
+          <div style={{flex:"1 1 240px",background:C.panel,border:`1px solid ${C.b}`,borderRadius:4,padding:12}}>
+            <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:8}}>
+              <span style={{fontSize:24,fontWeight:800}}>{selStock.ticker}</span>
+              <span style={{fontSize:10,color:C.dim,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{selStock.name}</span>
+            </div>
+            <div style={{fontSize:13,fontWeight:800,color:vColor(selStock.verdict),border:`1px solid ${vColor(selStock.verdict)}`,padding:"4px 8px",borderRadius:3,textAlign:"center",marginBottom:8}}>{selStock.verdict}</div>
+            <div style={{background:C.bg,border:`1px solid ${C.b}`,borderRadius:4,padding:8,marginBottom:8}}>
+              <div style={{fontSize:10,color:C.dim,fontWeight:700,marginBottom:3}}>KOMENTARZ</div>
+              <div style={{fontSize:11,color:vColor(selStock.verdict)}}>{selStock.reason}.</div>
+            </div>
+            <div style={{background:C.bg,border:`1px solid ${C.b}`,borderRadius:4,padding:8,textAlign:"center"}}>
+              <div style={{fontSize:10,color:C.dim,fontWeight:700}}>PROPONOWANY STOP</div>
+              <div style={{fontSize:18,color:C.red,fontWeight:800}}>{selStock.stopLoss.toFixed(2)}</div>
+              <div style={{fontSize:10,color:C.dim}}>(−{selStock.riskToStop.toFixed(1)}%)</div>
+            </div>
+          </div>
+          {/* parametry */}
+          <div style={{flex:"2 1 380px",background:C.panel,border:`1px solid ${C.b}`,borderRadius:4,padding:12}}>
+            <div style={{fontSize:10,color:C.faint,fontWeight:700,letterSpacing:"1px",marginBottom:6}}>PARAMETRY</div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:"0 18px"}}>
+              <Row label="Cena" value={`${selStock.price.toFixed(2)} USD`}/>
+              <Row label="Mansfield RS" value={selStock.mansfield.toFixed(2)} color={selStock.mansfield>=0?C.green:C.red}/>
+              <Row label="Zmiana 1W" value={`${selStock.change1W>=0?"+":""}${selStock.change1W.toFixed(2)}%`} color={selStock.change1W>=0?C.green:C.red}/>
+              <Row label="Sektor Trend" value={selStock.sectorTrend} color={selStock.sectorTrend==="ON"?C.green:selStock.sectorTrend==="OFF"?C.red:C.yellow}/>
+              <Row label="Pivot (20W High)" value={selStock.pivot.toFixed(2)}/>
+              <Row label="Breakout Volume" value={`${selStock.breakoutVol.toFixed(2)}×`} color={selStock.breakoutVol>=t.minVol?C.green:C.red}/>
+              <Row label="Odległość od pivota" value={`${selStock.dist>=0?"+":""}${selStock.dist.toFixed(2)}%`} color={selStock.dist>=0?C.green:C.red}/>
+              <Row label="Baza (12W)" value={`${selStock.base.toFixed(1)}%`} color={selStock.base<=t.maxBase?C.green:C.red}/>
+              <Row label="Strefa wybicia" value={`${selStock.pivot.toFixed(2)} – ${(selStock.pivot*(1+t.pivotZone/100)).toFixed(2)}`}/>
+              <Row label="ADR % (14D)" value={`${selStock.adr.toFixed(1)}%`}/>
+              <Row label="W strefie?" value={selStock.inZone?"TAK":"NIE"} color={selStock.inZone?C.green:C.red}/>
+              <Row label="Ryzyko do stopu" value={`${selStock.riskToStop.toFixed(1)}%`} color={selStock.riskToStop<=t.maxRisk?C.green:C.red}/>
+              <Row label="Trend Stage" value={`Stage ${selStock.stage}`} color={selStock.stage===2?C.green:selStock.stage===4?C.red:C.yellow}/>
+              <Row label="Rynek (SPY)" value={data.market.spy.aboveSMA30?"OK":"RYZYKO"} color={data.market.spy.aboveSMA30?C.green:C.red}/>
+              <Row label="Cena > SMA30W" value={selStock.priceAboveSMA30?"TAK":"NIE"} color={selStock.priceAboveSMA30?C.green:C.red}/>
+              <Row label="Rynek (QQQ)" value={data.market.qqq.aboveSMA30?"OK":"RYZYKO"} color={data.market.qqq.aboveSMA30?C.green:C.red}/>
+              <Row label="SMA30W rośnie" value={selStock.sma30Rising?"TAK":"NIE"} color={selStock.sma30Rising?C.green:C.red}/>
+              <Row label="Sektor vs Rynek" value={selStock.sectorTrend==="ON"?"SILNIEJSZY":selStock.sectorTrend==="OFF"?"SŁABSZY":"NEUTRALNY"} color={selStock.sectorTrend==="ON"?C.green:selStock.sectorTrend==="OFF"?C.red:C.yellow}/>
+            </div>
+          </div>
+          {/* checklista */}
+          <div style={{flex:"1 1 260px",background:C.panel,border:`1px solid ${C.b}`,borderRadius:4,padding:12}}>
+            <div style={{fontSize:10,color:C.faint,fontWeight:700,letterSpacing:"1px",marginBottom:6}}>KRYTERIA AUTOMATU (KUP)</div>
+            {Object.entries(selStock.checks).map(([k,c])=>(
+              <div key={k} style={{display:"flex",alignItems:"center",gap:6,fontSize:11,padding:"2px 0",borderBottom:`1px solid ${C.grid}`}}>
+                <span style={{color:c.ok?C.green:C.red,fontWeight:800,width:12}}>{c.ok?"✓":"✕"}</span>
+                <span style={{color:c.ok?C.mid:C.dim,flex:1}}>{c.label}</span>
+                <span style={{color:c.ok?C.green:C.red,fontWeight:600}}>{c.v}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* DUŻY WYKRES */}
+        <div style={{background:C.panel,border:`1px solid ${C.b}`,borderRadius:4,padding:10}}>
+          <CandleChart stock={selStock}/>
+          <div style={{fontSize:9.5,color:C.faint,marginTop:2,padding:"0 4px"}}>Dane: Weekly · Mansfield RS vs SPY · najedź kursorem, by odczytać wartości tygodnia · {source==="live"?"serie z data.json":"wykres reprezentatywny (demo) — realny po wdrożeniu"}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
