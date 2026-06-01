@@ -1,4 +1,4 @@
-# weinstein_scan.py  (v2 — wzmocniony: pełna przejrzystość pomijania)
+# weinstein_scan.py  (v3 — małe paczki + ponawianie pojedynczo, łagodniejsze dla Yahoo)
 # pip install yfinance pandas lxml
 import json, time, argparse, sys
 import pandas as pd
@@ -7,6 +7,9 @@ import yfinance as yf
 T = dict(minVol=1.5, maxBase=22.0, pivotZone=3.0, maxRisk=8.0, mansfieldMin=0.0)
 FLAT = 0.3          # próg "płaskiej" SMA30 (slope %) dla rozróżnienia Stage 1/2/3/4
 MIN_WEEKS = 60      # minimum historii: Mansfield(52) + slope(5) + zapas
+BATCH = 5           # rozmiar paczki (małe = łagodniej dla Yahoo)
+PAUSE = 2.0         # przerwa między paczkami (sekundy)
+RETRIES = 3         # liczba prób pobrania zanim się poddamy
 
 SECTOR_ETF = {
     "Technology":"XLK","Information Technology":"XLK","Communication Services":"XLC",
@@ -30,20 +33,29 @@ def classify_stage(price, sma_now, sma_prev):
     else:                         st = 1
     return st, rising
 
-def download(tickers, **kw):
-    """yf.download z prostym retry (łagodzi chwilowe błędy Yahoo)."""
-    for _ in range(3):
+def download(tickers, tries=RETRIES, **kw):
+    """Pobranie z rosnącą przerwą i bez wątków (łagodniej dla Yahoo)."""
+    for k in range(tries):
         try:
-            df = yf.download(tickers, progress=False, threads=True, **kw)
+            df = yf.download(tickers, progress=False, threads=False, **kw)
             if df is not None and len(df): return df
         except Exception:
             pass
-        time.sleep(3)
+        time.sleep(2 + k * 2)   # 2s, 4s, 6s...
     return None
+
+def extract(df, t, batch):
+    """Wyciąga dane jednej spółki z (być może zbiorczego) wyniku."""
+    if df is None: return None
+    try:
+        sub = df[t] if len(batch) > 1 else df
+        sub = sub.dropna()
+        return sub if len(sub) else None
+    except Exception:
+        return None
 
 def get_universe():
     tickers, names, sectors = set(), {}, {}
-    # --- S&P 500: znajdź tabelę konstytuentów po zawartości, nie po indeksie ---
     try:
         for tbl in pd.read_html("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"):
             sym = next((c for c in tbl.columns if "Symbol" in str(c)), None)
@@ -58,7 +70,6 @@ def get_universe():
             break
     except Exception as e:
         print("UWAGA: nie pobrano listy S&P 500:", e)
-    # --- Nasdaq-100: wybierz NAJWIĘKSZĄ tabelę z kolumną Ticker/Symbol ---
     try:
         best = None
         for tbl in pd.read_html("https://en.wikipedia.org/wiki/Nasdaq-100"):
@@ -78,7 +89,6 @@ def get_universe():
     return sorted(tickers), names, sectors
 
 def fill_missing_sectors(tickers, sectors):
-    """Dla spółek bez sektora (zwykle spoza S&P 500) dociąga sektor z yfinance."""
     missing = [t for t in tickers if not sectors.get(t)]
     for t in missing:
         try: sectors[t] = (yf.Ticker(t).get_info().get("sector") or "")
@@ -138,10 +148,13 @@ def gate(s):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--batch", type=int, default=BATCH)
+    ap.add_argument("--pause", type=float, default=PAUSE)
     args = ap.parse_args()
+    B, PAUSE_S = max(1, args.batch), args.pause
 
     tickers, names, sectors = get_universe()
-    print(f"Uniwersum: {len(tickers)} spółek (S&P 500 u Nasdaq 100)")
+    print(f"Uniwersum: {len(tickers)} spółek (S&P 500 u Nasdaq 100) | paczka={B}, przerwa={PAUSE_S}s")
     if len(tickers) < 400:
         print("UWAGA: lista wygląda na niekompletną — sprawdź połączenie / strukturę Wikipedii.")
     nmiss = fill_missing_sectors(tickers, sectors)
@@ -168,22 +181,23 @@ def main():
                     aboveSMA30=bool(c.iloc[-1] > s30.iloc[-1]))
 
     stocks, too_short, errors = [], [], []
-    B = 80
-    for i in range(0, len(tickers), B):
+    total = len(tickers)
+    for i in range(0, total, B):
         batch = tickers[i:i+B]
         wk  = download(batch, period="3y", interval="1wk", auto_adjust=True, group_by="ticker")
         dly = download(batch, period="3mo", interval="1d", auto_adjust=True, group_by="ticker")
-        if wk is None:
-            errors += [(t,"brak danych z Yahoo (cały batch)") for t in batch]
-            print(f"  {min(i+B,len(tickers))}/{len(tickers)} — batch bez danych"); continue
         for t in batch:
             try:
-                wkt = wk[t].dropna() if len(batch)>1 else wk.dropna()
-                if len(wkt) < MIN_WEEKS: too_short.append(t); continue
+                wkt = extract(wk, t, batch)
+                if wkt is None:   # paczka nie oddała tej spółki -> ponów pojedynczo
+                    wkt = extract(download(t, period="3y", interval="1wk", auto_adjust=True), t, [t])
+                if wkt is None:
+                    errors.append((t, "brak danych z Yahoo")); continue
+                if len(wkt) < MIN_WEEKS:
+                    too_short.append(t); continue
                 m = weekly_metrics(wkt, spy_close)
                 if m is None: too_short.append(t); continue
-                try: dlt = dly[t].dropna() if (dly is not None and len(batch)>1) else (dly.dropna() if dly is not None else None)
-                except Exception: dlt = None
+                dlt = extract(dly, t, batch)
                 adr = adr_from_daily(dlt)
                 if adr is None:
                     rng = (wkt["High"].iloc[-4:]/wkt["Low"].iloc[-4:]-1)*100
@@ -194,8 +208,9 @@ def main():
                 stocks.append(m)
             except Exception as e:
                 errors.append((t, type(e).__name__+": "+str(e)[:70]))
-        print(f"  {min(i+B,len(tickers))}/{len(tickers)} przetworzono")
-        time.sleep(1)
+        done = min(i+B, total)
+        print(f"  {done}/{total}  |  OK:{len(stocks)}  krótkie:{len(too_short)}  błędy:{len(errors)}")
+        time.sleep(PAUSE_S)
 
     data = {"meta":{"lastUpdate":time.strftime("%Y-%m-%d %H:%M"),
                     "universe":"S&P 500 + Nasdaq 100","count":len(stocks)},
@@ -203,20 +218,19 @@ def main():
             "stocks":stocks}
     with open("data.json","w",encoding="utf-8") as f: json.dump(data, f, ensure_ascii=False)
 
-    # ----- PEŁNY RAPORT: nic nie znika po cichu -----
+    # ----- PEŁNY RAPORT -----
     counts = {"KUP":0,"CZEKAJ":0,"NIE KUPUJ":0}
     for s in stocks: counts[gate(s)] += 1
     print(f"\nZapisano data.json — ocenione: {len(stocks)} spółek.")
     print(f"Wynik: KUP {counts['KUP']} | CZEKAJ {counts['CZEKAJ']} | NIE KUPUJ {counts['NIE KUPUJ']}")
-    print(f"Za krótka historia (<{MIN_WEEKS} tyg., pominięte CELOWO): {len(too_short)}")
-    if too_short: print("   ", ", ".join(sorted(too_short)))
+    print(f"Za krótka historia (<{MIN_WEEKS} tyg.): {len(too_short)}")
     print(f"Błędy/inne pominięcia: {len(errors)}")
     for t, why in errors[:40]: print(f"    {t}: {why}")
     accounted = len(stocks) + len(too_short) + len(errors)
     if accounted != len(tickers):
-        print(f"UWAGA: rozjazd ({accounted} rozliczonych != {len(tickers)} w uniwersum) — zgłoś, sprawdzę.")
+        print(f"UWAGA: rozjazd ({accounted} != {len(tickers)}) — zgłoś, sprawdzę.")
     else:
-        print("OK — każdy ticker z uniwersum został rozliczony (oceniony albo świadomie pominięty).")
+        print("OK — każdy ticker z uniwersum został rozliczony.")
 
 if __name__ == "__main__":
     main()
