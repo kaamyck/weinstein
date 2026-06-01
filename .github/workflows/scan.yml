@@ -11,10 +11,18 @@ permissions:
 jobs:
   update-data:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
 
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
+
+      - name: Show files
+        run: |
+          pwd
+          ls -la
+          echo "Workflow folder:"
+          ls -la .github/workflows || true
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -26,9 +34,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install yfinance pandas lxml html5lib beautifulsoup4
 
-      - name: Run Weinstein scanner
+      - name: Run Weinstein scanner full universe
         run: |
-          python weinstein_scan.py --batch 5 --pause 3
+          python weinstein_scan.py --batch 5 --pause 3 --debug
 
       - name: Check data.json is not empty
         run: |
@@ -36,11 +44,17 @@ jobs:
           import json
           with open("data.json", "r", encoding="utf-8") as f:
               d = json.load(f)
+
           stocks = d.get("stocks", [])
-          print("COUNT:", d.get("meta", {}).get("count"))
+          meta = d.get("meta", {})
+
+          print("META:", meta)
           print("STOCKS:", len(stocks))
+
           if len(stocks) == 0:
               raise SystemExit("BŁĄD: data.json ma 0 spółek — nie publikuję pustego pliku.")
+
+          print("FIRST STOCK:", stocks[0].get("ticker", "BRAK"))
           PY
 
       - name: Commit and push data.json
