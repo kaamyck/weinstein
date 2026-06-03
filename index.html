@@ -4,398 +4,918 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Weinstein Weekend Screener</title>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js"></script>
+
   <style>
-    body {
+    html, body {
       margin: 0;
-      font-family: Arial, sans-serif;
-      background: #0b1020;
-      color: #e5e7eb;
+      background: #070a0f;
+      color: #d6e0f0;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
     }
 
-    .wrap {
-      max-width: 1280px;
-      margin: 0 auto;
-      padding: 28px;
+    * {
+      box-sizing: border-box;
     }
 
-    h1 {
-      margin: 0 0 8px;
-      font-size: 32px;
+    a {
+      color: inherit;
     }
 
-    .subtitle {
-      color: #9ca3af;
-      margin-bottom: 24px;
+    #root {
+      min-height: 100vh;
     }
 
-    .cards {
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 14px;
-      margin-bottom: 22px;
+    ::-webkit-scrollbar {
+      width: 9px;
+      height: 9px;
     }
 
-    .card {
-      background: #111827;
-      border: 1px solid #263244;
-      border-radius: 16px;
-      padding: 18px;
-    }
-
-    .card .label {
-      color: #9ca3af;
-      font-size: 13px;
-      margin-bottom: 8px;
-    }
-
-    .card .value {
-      font-size: 30px;
-      font-weight: 700;
-    }
-
-    .msg {
-      border-radius: 16px;
-      padding: 18px;
-      margin: 18px 0 24px;
-      background: #172554;
-      border: 1px solid #1d4ed8;
-      color: #dbeafe;
-      line-height: 1.5;
-    }
-
-    .section {
-      margin-top: 28px;
-    }
-
-    .section h2 {
-      margin: 0 0 12px;
-      font-size: 22px;
-    }
-
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      background: #111827;
-      border: 1px solid #263244;
-      border-radius: 16px;
-      overflow: hidden;
-    }
-
-    th, td {
-      padding: 11px 10px;
-      border-bottom: 1px solid #263244;
-      text-align: left;
-      font-size: 14px;
-      white-space: nowrap;
-    }
-
-    th {
-      color: #9ca3af;
-      background: #1f2937;
-      font-weight: 600;
-    }
-
-    tr:hover {
-      background: #162033;
-    }
-
-    .tag {
-      padding: 5px 9px;
+    ::-webkit-scrollbar-thumb {
+      background: #1b2431;
       border-radius: 999px;
-      font-size: 12px;
-      font-weight: 700;
-      display: inline-block;
-    }
-
-    .buy {
-      background: #14532d;
-      color: #bbf7d0;
-    }
-
-    .wait {
-      background: #78350f;
-      color: #fde68a;
-    }
-
-    .avoid {
-      background: #374151;
-      color: #d1d5db;
-    }
-
-    .muted {
-      color: #9ca3af;
-    }
-
-    .good {
-      color: #86efac;
-      font-weight: 700;
-    }
-
-    .bad {
-      color: #fca5a5;
-      font-weight: 700;
-    }
-
-    .table-wrap {
-      overflow-x: auto;
-      border-radius: 16px;
-    }
-
-    .small {
-      font-size: 13px;
-      color: #9ca3af;
-      line-height: 1.45;
-    }
-
-    @media (max-width: 900px) {
-      .cards {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-      }
-    }
-
-    @media (max-width: 560px) {
-      .cards {
-        grid-template-columns: 1fr;
-      }
-
-      .wrap {
-        padding: 18px;
-      }
     }
   </style>
 </head>
+
 <body>
-  <div class="wrap">
-    <h1>Weinstein Weekend Screener</h1>
-    <div class="subtitle" id="meta">Ładowanie danych...</div>
+<div id="root">Ładowanie dashboardu…</div>
 
-    <div class="cards">
-      <div class="card">
-        <div class="label">KUP teraz</div>
-        <div class="value" id="buyCount">–</div>
-      </div>
-      <div class="card">
-        <div class="label">CZEKAJ / watchlista</div>
-        <div class="value" id="waitCount">–</div>
-      </div>
-      <div class="card">
-        <div class="label">Nie kupuj</div>
-        <div class="value" id="avoidCount">–</div>
-      </div>
-      <div class="card">
-        <div class="label">Ocenione spółki</div>
-        <div class="value" id="allCount">–</div>
-      </div>
-    </div>
+<script type="text/babel">
+const { useEffect, useMemo, useState } = React;
 
-    <div class="msg" id="mainMessage">
-      Ładowanie dashboardu...
-    </div>
+const C = {
+  bg: "#070a0f",
+  panel: "#0b111b",
+  panel2: "#0f1826",
+  head: "#0a1019",
+  border: "#1b2431",
+  grid: "#141d2a",
+  txt: "#d6e0f0",
+  mid: "#9fb0c9",
+  dim: "#69788f",
+  faint: "#46546b",
+  green: "#16d98a",
+  yellow: "#ffcf3a",
+  red: "#ff4d5e",
+  cyan: "#35cfe0",
+  blue: "#3d7dff"
+};
 
-    <div class="section">
-      <h2>KUP teraz</h2>
-      <div class="small">Tylko spółki spełniające pełną logikę wejścia. Jeśli tu jest pusto, to nie znaczy, że skaner nie działa — znaczy, że nie ma czystego sygnału.</div>
-      <br>
-      <div class="table-wrap" id="buyTable"></div>
-    </div>
+const DEFAULTS = {
+  minVol: 1.5,
+  maxBase: 22,
+  pivotZone: 3,
+  maxRisk: 8,
+  mansfieldMin: 0
+};
 
-    <div class="section">
-      <h2>Najlepsze CZEKAJ — watchlista do obserwacji</h2>
-      <div class="small">To jest najważniejsza lista robocza. Tu są spółki mocne, ale jeszcze bez idealnego wejścia.</div>
-      <br>
-      <div class="table-wrap" id="waitTable"></div>
-    </div>
-
-    <div class="section">
-      <h2>Rynek</h2>
-      <div class="table-wrap" id="marketTable"></div>
-    </div>
-  </div>
-
-  <script>
-    function n(x, fallback = "–") {
-      if (x === null || x === undefined || Number.isNaN(x)) return fallback;
-      return x;
+const DEMO = {
+  meta: {
+    lastUpdate: "DEMO — brak data.json",
+    universe: "S&P 500 + Nasdaq 100",
+    count: 10
+  },
+  market: {
+    spy: { price: 579.43, change: 0.48, aboveSMA30: true },
+    qqq: { price: 503.62, change: 0.78, aboveSMA30: true }
+  },
+  stocks: [
+    {
+      ticker: "NVDA", name: "NVIDIA Corporation", sector: "XLK",
+      price: 948.71, change1W: 2.21, stage: 2,
+      mansfield: 18.45, mansfieldRising: true, sectorTrend: "ON",
+      breakoutVol: 2.31, base: 11.2, adr: 3.8, riskToStop: 5.4,
+      pivot: 930.50, distToPivot: 1.96,
+      priceAboveSMA30: true, sma30Rising: true,
+      stopLoss: 897.49
+    },
+    {
+      ticker: "MSFT", name: "Microsoft Corporation", sector: "XLK",
+      price: 415.38, change1W: 1.20, stage: 2,
+      mansfield: 9.67, mansfieldRising: true, sectorTrend: "ON",
+      breakoutVol: 1.82, base: 12.7, adr: 2.6, riskToStop: 4.6,
+      pivot: 410.00, distToPivot: 1.31,
+      priceAboveSMA30: true, sma30Rising: true,
+      stopLoss: 396.27
+    },
+    {
+      ticker: "AMD", name: "Advanced Micro Devices", sector: "XLK",
+      price: 168.90, change1W: 3.10, stage: 2,
+      mansfield: 14.90, mansfieldRising: true, sectorTrend: "ON",
+      breakoutVol: 2.05, base: 16.8, adr: 4.5, riskToStop: 6.8,
+      pivot: 164.90, distToPivot: 2.43,
+      priceAboveSMA30: true, sma30Rising: true,
+      stopLoss: 157.42
+    },
+    {
+      ticker: "AVGO", name: "Broadcom Inc.", sector: "XLK",
+      price: 1521.10, change1W: -0.18, stage: 2,
+      mansfield: 11.35, mansfieldRising: true, sectorTrend: "ON",
+      breakoutVol: 1.22, base: 17.9, adr: 2.8, riskToStop: 6.2,
+      pivot: 1513.50, distToPivot: 0.50,
+      priceAboveSMA30: true, sma30Rising: true,
+      stopLoss: 1426.79
     }
+  ]
+};
 
-    function scoreStock(s) {
-      let score = 0;
+function safeNum(v, fallback = 0) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
 
-      if (s.stage === 2) score += 30;
-      if (s.mansfield > 0) score += Math.min(30, s.mansfield / 4);
-      if (s.mansfieldRising) score += 10;
-      if (s.sectorTrend === "ON") score += 10;
-      if (s.distToPivot >= -5 && s.distToPivot <= 5) score += 10;
-      if (s.base <= 22) score += 5;
-      if (s.riskToStop <= 8) score += 5;
+function fmt(v, d = 2) {
+  const n = safeNum(v, null);
+  if (n === null) return "—";
+  return n.toFixed(d);
+}
 
-      return Math.round(score);
+function pct(v, d = 1) {
+  const n = safeNum(v, null);
+  if (n === null) return "—";
+  return `${n >= 0 ? "+" : ""}${n.toFixed(d)}%`;
+}
+
+function verdictColor(v) {
+  if (v === "KUP") return C.green;
+  if (v === "CZEKAJ") return C.yellow;
+  return C.red;
+}
+
+function gate(s, t, market) {
+  const dist = safeNum(s.distToPivot, s.pivot ? ((s.price - s.pivot) / s.pivot) * 100 : 999);
+  const marketOK = !!market?.spy?.aboveSMA30 && !!market?.qqq?.aboveSMA30;
+
+  const checks = {
+    stage2: {
+      ok: safeNum(s.stage) === 2,
+      label: "Stage 2",
+      value: `Stage ${s.stage ?? "—"}`
+    },
+    above: {
+      ok: !!s.priceAboveSMA30,
+      label: "Cena > SMA30W",
+      value: s.priceAboveSMA30 ? "TAK" : "NIE"
+    },
+    smaRising: {
+      ok: !!s.sma30Rising,
+      label: "SMA30W rośnie",
+      value: s.sma30Rising ? "TAK" : "NIE"
+    },
+    rs: {
+      ok: safeNum(s.mansfield) > t.mansfieldMin && !!s.mansfieldRising,
+      label: "Mansfield > 0 i rośnie",
+      value: fmt(s.mansfield, 2)
+    },
+    zone: {
+      ok: dist >= 0 && dist <= t.pivotZone,
+      label: `Cena w strefie 0–${t.pivotZone}% nad pivotem`,
+      value: pct(dist, 2)
+    },
+    volume: {
+      ok: safeNum(s.breakoutVol) >= t.minVol,
+      label: `Wolumen ≥ ${t.minVol}×`,
+      value: `${fmt(s.breakoutVol, 2)}×`
+    },
+    base: {
+      ok: safeNum(s.base) <= t.maxBase,
+      label: `Baza ≤ ${t.maxBase}%`,
+      value: `${fmt(s.base, 1)}%`
+    },
+    risk: {
+      ok: safeNum(s.riskToStop) <= t.maxRisk,
+      label: `Ryzyko ≤ ${t.maxRisk}%`,
+      value: `${fmt(s.riskToStop, 1)}%`
+    },
+    market: {
+      ok: marketOK,
+      label: "Rynek SPY + QQQ nad SMA30",
+      value: marketOK ? "OK" : "RYZYKO"
+    },
+    sector: {
+      ok: s.sectorTrend !== "OFF",
+      label: "Sektor nie jest OFF",
+      value: s.sectorTrend || "—"
     }
+  };
 
-    function signalTag(signal) {
-      if (signal === "KUP") return '<span class="tag buy">KUP</span>';
-      if (signal === "CZEKAJ") return '<span class="tag wait">CZEKAJ</span>';
-      return '<span class="tag avoid">NIE KUPUJ</span>';
-    }
+  const hardFail =
+    !checks.stage2.ok ||
+    !checks.above.ok ||
+    safeNum(s.mansfield) < t.mansfieldMin;
 
-    function explain(s) {
-      const reasons = [];
+  let verdict = "CZEKAJ";
+  if (hardFail) verdict = "NIE KUPUJ";
+  else if (Object.values(checks).every(x => x.ok)) verdict = "KUP";
 
-      if (s.stage !== 2) reasons.push("nie jest w Stage 2");
-      if (s.mansfield < 0) reasons.push("słaby Mansfield");
-      if (!s.mansfieldRising) reasons.push("Mansfield nie rośnie");
-      if (s.distToPivot < 0) reasons.push("jeszcze pod pivotem");
-      if (s.distToPivot > 3) reasons.push("za daleko od pivotu");
-      if (s.breakoutVol < 1.5) reasons.push("brak mocnego wolumenu wybicia");
-      if (s.base > 22) reasons.push("baza za szeroka");
-      if (s.riskToStop > 8) reasons.push("ryzyko do stopa za duże");
-      if (s.sectorTrend === "OFF") reasons.push("słaby sektor");
+  return { checks, verdict, dist, marketOK };
+}
 
-      if (!reasons.length) return "Setup czysty według modelu.";
-      return reasons.slice(0, 3).join(", ");
-    }
+function reasonText(s, result, t) {
+  const c = result.checks;
 
-    function renderTable(stocks, emptyText) {
-      if (!stocks.length) {
-        return `<div class="card muted">${emptyText}</div>`;
+  if (result.verdict === "KUP") {
+    return "Pełny setup: trend, RS, wolumen, baza i ryzyko są zgodne.";
+  }
+
+  if (result.verdict === "NIE KUPUJ") {
+    const r = [];
+    if (!c.stage2.ok) r.push("poza Stage 2");
+    if (!c.above.ok) r.push("cena pod SMA30W");
+    if (safeNum(s.mansfield) < t.mansfieldMin) r.push("słaby Mansfield");
+    if (s.sectorTrend === "OFF") r.push("sektor OFF");
+    return r.slice(0, 2).join(", ") || "setup odrzucony";
+  }
+
+  const r = [];
+  if (!c.zone.ok) r.push(result.dist < 0 ? "jeszcze pod pivotem" : "cena uciekła nad pivot");
+  if (!c.volume.ok) r.push("brakuje wolumenu");
+  if (!c.base.ok) r.push("baza za szeroka");
+  if (!c.risk.ok) r.push("ryzyko do stopa za duże");
+  if (!c.sector.ok) r.push("sektor OFF");
+  if (!c.market.ok) r.push("rynek nie pomaga");
+
+  return r.slice(0, 2).join(", ") || "dobry kandydat, czekamy na trigger";
+}
+
+function setupScore(s, result, t) {
+  let score = 0;
+
+  if (result.verdict === "KUP") score += 100;
+  if (safeNum(s.stage) === 2) score += 25;
+  if (s.priceAboveSMA30) score += 10;
+  if (s.sma30Rising) score += 10;
+  if (safeNum(s.mansfield) > t.mansfieldMin) score += Math.min(35, safeNum(s.mansfield) / 3);
+  if (s.mansfieldRising) score += 10;
+  if (s.sectorTrend === "ON") score += 10;
+  if (s.sectorTrend === "NEU") score += 4;
+  if (safeNum(s.breakoutVol) >= t.minVol) score += 12;
+  if (safeNum(s.base) <= t.maxBase) score += 10;
+  if (safeNum(s.riskToStop) <= t.maxRisk) score += 10;
+
+  if (result.dist >= 0 && result.dist <= t.pivotZone) score += 15;
+  else if (result.dist < 0 && result.dist >= -5) score += 9;
+  else if (result.dist > t.pivotZone && result.dist <= t.pivotZone + 4) score += 4;
+
+  return Math.round(score);
+}
+
+function isPlayable(s, result, t) {
+  if (result.verdict === "KUP") return true;
+  if (result.verdict !== "CZEKAJ") return false;
+
+  if (safeNum(s.stage) !== 2) return false;
+  if (!s.priceAboveSMA30) return false;
+  if (safeNum(s.mansfield) <= t.mansfieldMin) return false;
+  if (s.sectorTrend === "OFF") return false;
+  if (safeNum(s.base) > t.maxBase * 1.25) return false;
+  if (safeNum(s.riskToStop) > t.maxRisk * 1.35) return false;
+  if (result.dist < -6 || result.dist > t.pivotZone + 6) return false;
+
+  return true;
+}
+
+function genSeries(stock) {
+  const n = 80;
+  const arr = [];
+  const price = safeNum(stock.price, 100);
+  const trend = safeNum(stock.stage) === 2 ? 0.55 : 1.2;
+  const start = price * trend;
+
+  for (let i = 0; i < n; i++) {
+    const k = i / (n - 1);
+    const wave = Math.sin(k * Math.PI * 5) * price * 0.035;
+    const base = start + (price - start) * k;
+    const close = base + wave;
+    const high = close * 1.025;
+    const low = close * 0.975;
+    const open = close * (0.99 + ((i % 5) * 0.004));
+    const vol = 10 + (i % 11) + (i > n - 8 ? safeNum(stock.breakoutVol, 1) * 4 : 0);
+    arr.push({ open, high, low, close, vol });
+  }
+
+  arr[n - 1].close = price;
+  arr[n - 1].high = price * 1.02;
+  arr[n - 1].low = price * 0.98;
+  return arr;
+}
+
+function Chart({ stock }) {
+  const data = stock.weekly && stock.weekly.length > 20 ? stock.weekly : genSeries(stock);
+
+  const W = 900;
+  const H = 440;
+  const L = 36;
+  const R = 865;
+  const T = 24;
+  const B = 330;
+  const VB = 410;
+  const VT = 350;
+
+  const highs = data.map(d => safeNum(d.h ?? d.high));
+  const lows = data.map(d => safeNum(d.l ?? d.low));
+  const closes = data.map(d => safeNum(d.c ?? d.close));
+  const vols = data.map(d => safeNum(d.v ?? d.vol));
+
+  let maxP = Math.max(...highs, safeNum(stock.pivot));
+  let minP = Math.min(...lows, safeNum(stock.pivot));
+  const pad = (maxP - minP) * 0.08 || 1;
+  maxP += pad;
+  minP -= pad;
+
+  const maxV = Math.max(...vols, 1);
+
+  const x = i => L + (i / (data.length - 1)) * (R - L);
+  const y = v => B - ((v - minP) / (maxP - minP)) * (B - T);
+  const yv = v => VB - (v / maxV) * (VB - VT);
+
+  const sma = (arr, p) => {
+    const out = [];
+    for (let i = 0; i < arr.length; i++) {
+      if (i < p - 1) {
+        out.push(null);
+      } else {
+        let sum = 0;
+        for (let j = i - p + 1; j <= i; j++) sum += arr[j];
+        out.push(sum / p);
       }
-
-      return `
-        <table>
-          <thead>
-            <tr>
-              <th>Sygnał</th>
-              <th>Ticker</th>
-              <th>Nazwa</th>
-              <th>Score</th>
-              <th>Cena</th>
-              <th>Stage</th>
-              <th>Mansfield</th>
-              <th>ADR %</th>
-              <th>Pivot</th>
-              <th>Do pivotu %</th>
-              <th>Baza %</th>
-              <th>Stop</th>
-              <th>Ryzyko %</th>
-              <th>Sektor</th>
-              <th>Dlaczego nie KUP?</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${stocks.map(s => `
-              <tr>
-                <td>${signalTag(s.signal)}</td>
-                <td><strong>${n(s.ticker)}</strong></td>
-                <td class="muted">${n(s.name)}</td>
-                <td><strong>${scoreStock(s)}</strong></td>
-                <td>${n(s.price)}</td>
-                <td>${n(s.stage)}</td>
-                <td class="${s.mansfield >= 0 ? "good" : "bad"}">${n(s.mansfield)}</td>
-                <td>${n(s.adr)}</td>
-                <td>${n(s.pivot)}</td>
-                <td>${n(s.distToPivot)}</td>
-                <td>${n(s.base)}</td>
-                <td>${n(s.stopLoss)}</td>
-                <td>${n(s.riskToStop)}</td>
-                <td>${n(s.sector)} / ${n(s.sectorTrend)}</td>
-                <td class="muted">${explain(s)}</td>
-              </tr>
-            `).join("")}
-          </tbody>
-        </table>
-      `;
     }
+    return out;
+  };
 
-    function renderMarket(data) {
-      const spy = data.market?.spy || {};
-      const qqq = data.market?.qqq || {};
+  const sma10 = sma(closes, 10);
+  const sma30 = sma(closes, 30);
 
-      return `
-        <table>
-          <thead>
-            <tr>
-              <th>Instrument</th>
-              <th>Cena</th>
-              <th>Zmiana %</th>
-              <th>Powyżej SMA30</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td><strong>SPY</strong></td>
-              <td>${n(spy.price)}</td>
-              <td>${n(spy.change)}</td>
-              <td>${spy.aboveSMA30 ? "TAK" : "NIE"}</td>
-            </tr>
-            <tr>
-              <td><strong>QQQ</strong></td>
-              <td>${n(qqq.price)}</td>
-              <td>${n(qqq.change)}</td>
-              <td>${qqq.aboveSMA30 ? "TAK" : "NIE"}</td>
-            </tr>
-          </tbody>
-        </table>
-      `;
-    }
+  const path = arr => arr
+    .map((v, i) => v == null ? null : `${i === 0 || arr[i - 1] == null ? "M" : "L"} ${x(i)} ${y(v)}`)
+    .filter(Boolean)
+    .join(" ");
 
-    async function loadDashboard() {
-      try {
-        const res = await fetch("./data.json?cache=" + Date.now());
-        if (!res.ok) throw new Error("Nie udało się pobrać data.json");
-        const data = await res.json();
+  const candleW = Math.max(2, (R - L) / data.length * 0.55);
 
-        const stocks = data.stocks || [];
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", display: "block" }}>
+      <rect x="0" y="0" width={W} height={H} fill={C.panel} />
 
-        const buy = stocks
-          .filter(s => s.signal === "KUP")
-          .sort((a, b) => scoreStock(b) - scoreStock(a));
+      {[0, 1, 2, 3, 4].map(i => {
+        const p = minP + ((maxP - minP) * i / 4);
+        return (
+          <g key={i}>
+            <line x1={L} y1={y(p)} x2={R} y2={y(p)} stroke={C.grid} />
+            <text x={R + 8} y={y(p) + 4} fill={C.dim} fontSize="11">{p.toFixed(2)}</text>
+          </g>
+        );
+      })}
 
-        const wait = stocks
-          .filter(s => s.signal === "CZEKAJ")
-          .sort((a, b) => scoreStock(b) - scoreStock(a))
-          .slice(0, 50);
+      <line x1={L} y1={y(stock.pivot)} x2={R} y2={y(stock.pivot)} stroke={C.yellow} strokeDasharray="5 5" />
+      <text x={L + 4} y={y(stock.pivot) - 6} fill={C.yellow} fontSize="11">
+        Pivot {fmt(stock.pivot, 2)}
+      </text>
 
-        const avoid = stocks.filter(s => s.signal === "NIE KUPUJ");
+      {data.map((d, i) => {
+        const o = safeNum(d.o ?? d.open);
+        const h = safeNum(d.h ?? d.high);
+        const l = safeNum(d.l ?? d.low);
+        const c = safeNum(d.c ?? d.close);
+        const up = c >= o;
+        const color = up ? C.green : C.red;
+        return (
+          <g key={i}>
+            <line x1={x(i)} y1={y(h)} x2={x(i)} y2={y(l)} stroke={color} />
+            <rect
+              x={x(i) - candleW / 2}
+              y={y(Math.max(o, c))}
+              width={candleW}
+              height={Math.max(1, y(Math.min(o, c)) - y(Math.max(o, c)))}
+              fill={color}
+            />
+          </g>
+        );
+      })}
 
-        document.getElementById("buyCount").textContent = buy.length;
-        document.getElementById("waitCount").textContent = wait.length;
-        document.getElementById("avoidCount").textContent = avoid.length;
-        document.getElementById("allCount").textContent = stocks.length;
+      <path d={path(sma10)} fill="none" stroke="#f5c542" strokeWidth="1.5" />
+      <path d={path(sma30)} fill="none" stroke="#3d7dff" strokeWidth="2" />
 
-        document.getElementById("meta").textContent =
-          `Ostatni skan: ${data.meta?.lastUpdate || "brak daty"} | Uniwersum: ${data.meta?.universe || "brak danych"} | Model: ${data.meta?.model || "Weinstein"}`;
+      {data.map((d, i) => {
+        const o = safeNum(d.o ?? d.open);
+        const c = safeNum(d.c ?? d.close);
+        const v = safeNum(d.v ?? d.vol);
+        const color = c >= o ? C.green : C.red;
+        return (
+          <rect
+            key={i}
+            x={x(i) - candleW / 2}
+            y={yv(v)}
+            width={candleW}
+            height={VB - yv(v)}
+            fill={color}
+            opacity="0.45"
+          />
+        );
+      })}
 
-        if (buy.length === 0 && wait.length > 0) {
-          document.getElementById("mainMessage").innerHTML =
-            `<strong>Brak czystych sygnałów KUP.</strong><br>
-            To nie jest błąd. Skaner znalazł ${wait.length} spółek w trybie CZEKAJ.
-            To są kandydaci do obserwacji — jeszcze nie wejście. Patrzymy na trigger, wolumen, pivot i ryzyko do stopa.`;
-        } else if (buy.length > 0) {
-          document.getElementById("mainMessage").innerHTML =
-            `<strong>Są spółki z sygnałem KUP: ${buy.length}.</strong><br>
-            Przejrzyj je ręcznie przed wejściem. Skaner daje selekcję, nie zastępuje decyzji tradera.`;
-        } else {
-          document.getElementById("mainMessage").innerHTML =
-            `<strong>Brak KUP i brak CZEKAJ.</strong><br>
-            To może oznaczać bardzo słaby rynek albo problem z danymi. Sprawdź datę skanu i data.json.`;
+      <text x={L} y={18} fill={C.txt} fontSize="14" fontWeight="800">
+        {stock.ticker} — wykres tygodniowy
+      </text>
+      <text x={L} y={345} fill={C.dim} fontSize="11">Wolumen</text>
+    </svg>
+  );
+}
+
+function Metric({ label, value, color }) {
+  return (
+    <div style={{
+      display: "flex",
+      justifyContent: "space-between",
+      gap: 10,
+      borderBottom: `1px solid ${C.grid}`,
+      padding: "5px 0",
+      fontSize: 12
+    }}>
+      <span style={{ color: C.dim }}>{label}</span>
+      <strong style={{ color: color || C.txt }}>{value}</strong>
+    </div>
+  );
+}
+
+function Card({ stock, selected, onClick }) {
+  const statusColor = stock.playStatus === "KUP TERAZ" ? C.green : C.yellow;
+  const border = selected ? C.cyan : C.border;
+
+  const chip = (label, value, ok) => (
+    <div style={{
+      border: `1px solid ${ok ? "#184735" : C.border}`,
+      borderRadius: 5,
+      padding: "5px 6px",
+      background: C.bg
+    }}>
+      <div style={{ color: C.faint, fontSize: 9, textTransform: "uppercase" }}>{label}</div>
+      <div style={{ color: ok ? C.green : C.yellow, fontSize: 12, fontWeight: 900 }}>{value}</div>
+    </div>
+  );
+
+  return (
+    <div onClick={onClick} style={{
+      background: selected ? "#15273b" : C.panel2,
+      border: `1px solid ${border}`,
+      borderRadius: 8,
+      padding: 11,
+      marginBottom: 9,
+      cursor: "pointer"
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 9 }}>
+        <div>
+          <div style={{ fontSize: 18, fontWeight: 950, lineHeight: 1 }}>{stock.ticker}</div>
+          <div style={{ fontSize: 10, color: C.dim, marginTop: 3 }}>{stock.sector || "—"}</div>
+        </div>
+
+        <div style={{
+          color: statusColor,
+          border: `1px solid ${statusColor}`,
+          borderRadius: 999,
+          padding: "3px 8px",
+          fontSize: 10,
+          fontWeight: 900
+        }}>
+          {stock.playStatus === "KUP TERAZ" ? "KUP" : "WATCH"}
+        </div>
+
+        <div style={{ marginLeft: "auto", textAlign: "right" }}>
+          <div style={{ color: C.faint, fontSize: 9 }}>SCORE</div>
+          <div style={{ color: C.cyan, fontSize: 22, fontWeight: 950 }}>{stock.score}</div>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+        <div style={{ border: `1px solid ${C.border}`, borderRadius: 6, padding: 8, background: C.bg }}>
+          <div style={{ color: C.faint, fontSize: 10, fontWeight: 900, marginBottom: 6 }}>TREND / SIŁA</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 5 }}>
+            {chip("Stage", `S${stock.stage}`, stock.stage === 2)}
+            {chip("RS", fmt(stock.mansfield, 1), stock.mansfield > 0)}
+            {chip("Sektor", stock.sectorTrend || "—", stock.sectorTrend !== "OFF")}
+          </div>
+        </div>
+
+        <div style={{ border: `1px solid ${C.border}`, borderRadius: 6, padding: 8, background: C.bg }}>
+          <div style={{ color: C.faint, fontSize: 10, fontWeight: 900, marginBottom: 6 }}>JAKOŚĆ SETUPU</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 5 }}>
+            {chip("Vol", `${fmt(stock.breakoutVol, 1)}×`, stock.breakoutVol >= DEFAULTS.minVol)}
+            {chip("Baza", `${fmt(stock.base, 1)}%`, stock.base <= DEFAULTS.maxBase)}
+            {chip("Risk", `${fmt(stock.riskToStop, 1)}%`, stock.riskToStop <= DEFAULTS.maxRisk)}
+          </div>
+        </div>
+      </div>
+
+      <div style={{
+        marginTop: 8,
+        display: "grid",
+        gridTemplateColumns: "1fr 1fr auto",
+        gap: 8,
+        alignItems: "center",
+        fontSize: 11
+      }}>
+        <div style={{ color: C.mid }}>
+          Cena <b style={{ color: C.txt }}>{fmt(stock.price, 2)}</b> · 1W{" "}
+          <b style={{ color: stock.change1W >= 0 ? C.green : C.red }}>{pct(stock.change1W, 2)}</b>
+        </div>
+
+        <div style={{ color: stock.dist >= 0 ? C.green : C.yellow }}>
+          Pivot <b>{pct(stock.dist, 1)}</b> · ADR <b>{fmt(stock.adr, 1)}%</b>
+        </div>
+
+        <a
+          href={`https://www.tradingview.com/symbols/${stock.ticker}/`}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={e => e.stopPropagation()}
+          style={{
+            color: C.cyan,
+            textDecoration: "none",
+            border: `1px solid ${C.border}`,
+            borderRadius: 4,
+            padding: "4px 7px",
+            fontSize: 10,
+            fontWeight: 900
+          }}
+        >
+          TV ↗
+        </a>
+      </div>
+
+      <div style={{
+        marginTop: 8,
+        paddingTop: 7,
+        borderTop: `1px solid ${C.grid}`,
+        color: C.dim,
+        fontSize: 10.5,
+        lineHeight: 1.35
+      }}>
+        {stock.reason}
+      </div>
+    </div>
+  );
+}
+
+function App() {
+  const [data, setData] = useState(DEMO);
+  const [source, setSource] = useState("demo");
+  const [filter, setFilter] = useState("PLAYABLE");
+  const [selected, setSelected] = useState(null);
+  const [t, setT] = useState(DEFAULTS);
+
+  useEffect(() => {
+    fetch("./data.json?cache=" + Date.now(), { cache: "no-store" })
+      .then(r => r.ok ? r.json() : Promise.reject(new Error("Brak data.json")))
+      .then(j => {
+        if (j && Array.isArray(j.stocks)) {
+          setData({
+            meta: j.meta || { lastUpdate: "wczytane", universe: "", count: j.stocks.length },
+            market: j.market || DEMO.market,
+            stocks: j.stocks
+          });
+          setSource("live");
+          setSelected(j.stocks[0]?.ticker || null);
         }
+      })
+      .catch(() => {
+        setSource("demo");
+        setSelected(DEMO.stocks[0].ticker);
+      });
+  }, []);
 
-        document.getElementById("buyTable").innerHTML =
-          renderTable(buy, "Brak czystych sygnałów KUP.");
+  const evaluated = useMemo(() => {
+    return (data.stocks || []).map(s => {
+      const fixed = { ...s };
+      fixed.price = safeNum(fixed.price);
+      fixed.pivot = safeNum(fixed.pivot);
+      fixed.distToPivot = fixed.distToPivot ?? (fixed.pivot ? ((fixed.price - fixed.pivot) / fixed.pivot) * 100 : 999);
+      fixed.stopLoss = fixed.stopLoss ?? fixed.price * (1 - safeNum(fixed.riskToStop) / 100);
 
-        document.getElementById("waitTable").innerHTML =
-          renderTable(wait, "Brak spółek w trybie CZEKAJ.");
+      const result = gate(fixed, t, data.market);
+      const reason = reasonText(fixed, result, t);
+      const score = setupScore(fixed, result, t);
+      const playable = isPlayable(fixed, result, t);
+      const playStatus = result.verdict === "KUP" ? "KUP TERAZ" : playable ? "WATCH" : "ODRZUCONE";
 
-        document.getElementById("marketTable").innerHTML = renderMarket(data);
+      return {
+        ...fixed,
+        ...result,
+        reason,
+        score,
+        playable,
+        playStatus,
+        dist: result.dist,
+        inZone: result.dist >= 0 && result.dist <= t.pivotZone
+      };
+    });
+  }, [data, t]);
 
-      } catch (err) {
-        document.getElementById("mainMessage").innerHTML =
-          `<strong>Błąd ładowania dashboardu.</strong><br>${err.message}`;
-        document.getElementById("meta").textContent = "Nie udało się załadować danych.";
-      }
-    }
+  const playable = useMemo(() => {
+    return evaluated
+      .filter(s => s.playStatus !== "ODRZUCONE")
+      .sort((a, b) => b.score - a.score);
+  }, [evaluated]);
 
-    loadDashboard();
-  </script>
+  const buy = playable.filter(s => s.playStatus === "KUP TERAZ");
+  const watch = playable.filter(s => s.playStatus === "WATCH");
+
+  const list = useMemo(() => {
+    if (filter === "KUP") return buy;
+    if (filter === "WATCH") return watch;
+    return playable;
+  }, [filter, playable, buy, watch]);
+
+  const selectedStock = useMemo(() => {
+    return evaluated.find(s => s.ticker === selected) || list[0] || evaluated[0];
+  }, [evaluated, selected, list]);
+
+  useEffect(() => {
+    if (!selectedStock && list.length) setSelected(list[0].ticker);
+  }, [list, selectedStock]);
+
+  const marketOK = data.market?.spy?.aboveSMA30 && data.market?.qqq?.aboveSMA30;
+
+  return (
+    <div style={{ padding: 10, minHeight: "100vh", background: C.bg }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+        <div style={{
+          flex: "1 1 360px",
+          background: C.head,
+          border: `1px solid ${C.border}`,
+          borderRadius: 6,
+          padding: "10px 14px"
+        }}>
+          <div style={{ fontSize: 18, fontWeight: 950 }}>
+            WEINSTEIN WEEKEND SCREENER <span style={{ color: C.green }}>v9</span>
+          </div>
+          <div style={{ color: C.dim, fontSize: 11, marginTop: 4 }}>
+            Universe: {data.meta?.universe || "—"} · Scan: {data.meta?.count || data.stocks.length} · Update: {data.meta?.lastUpdate || "—"}
+          </div>
+          <div style={{ color: source === "live" ? C.green : C.yellow, fontSize: 10, marginTop: 4 }}>
+            {source === "live" ? "● LIVE — dane z data.json" : "● DEMO — nie znaleziono data.json"}
+          </div>
+        </div>
+
+        <div style={{ display: "flex", border: `1px solid ${C.border}`, borderRadius: 6, overflow: "hidden" }}>
+          <button onClick={() => setFilter("PLAYABLE")} style={buttonStyle(filter === "PLAYABLE", C.cyan)}>
+            <div>DO ROZEGRANIA</div>
+            <strong>{playable.length}</strong>
+          </button>
+          <button onClick={() => setFilter("KUP")} style={buttonStyle(filter === "KUP", C.green)}>
+            <div>KUP</div>
+            <strong>{buy.length}</strong>
+          </button>
+          <button onClick={() => setFilter("WATCH")} style={buttonStyle(filter === "WATCH", C.yellow)}>
+            <div>WATCH</div>
+            <strong>{watch.length}</strong>
+          </button>
+        </div>
+
+        <div style={{
+          background: C.head,
+          border: `1px solid ${C.border}`,
+          borderRadius: 6,
+          padding: "8px 14px",
+          minWidth: 170
+        }}>
+          <div style={{ color: C.dim, fontSize: 10, fontWeight: 900 }}>RYNEK</div>
+          <MarketLine label="SPY" m={data.market?.spy} />
+          <MarketLine label="QQQ" m={data.market?.qqq} />
+        </div>
+
+        <div style={{
+          background: C.head,
+          border: `1px solid ${C.border}`,
+          borderRadius: 6,
+          padding: "8px 16px",
+          minWidth: 120,
+          textAlign: "center"
+        }}>
+          <div style={{ color: C.dim, fontSize: 10, fontWeight: 900 }}>OGÓLNIE</div>
+          <div style={{ color: marketOK ? C.green : C.red, fontSize: 24, fontWeight: 950 }}>
+            {marketOK ? "OK" : "RYZYKO"}
+          </div>
+        </div>
+      </div>
+
+      {playable.length === 0 && (
+        <div style={{
+          background: "#172554",
+          border: `1px solid ${C.blue}`,
+          color: "#dbeafe",
+          borderRadius: 6,
+          padding: 12,
+          marginBottom: 8,
+          fontSize: 13,
+          lineHeight: 1.45
+        }}>
+          Brak spółek do rozegrania. To nie znaczy, że skaner nie działa. Oznacza, że po filtrach nie ma dziś sensownego setupu KUP/WATCH.
+        </div>
+      )}
+
+      <div style={{
+        display: "grid",
+        gridTemplateColumns: "minmax(430px, 520px) minmax(0, 1fr)",
+        gap: 10,
+        alignItems: "start"
+      }}>
+        <div style={{
+          maxHeight: "calc(100vh - 100px)",
+          overflow: "auto",
+          paddingRight: 3
+        }}>
+          <div style={{
+            color: C.dim,
+            fontSize: 11,
+            margin: "0 0 8px 2px",
+            lineHeight: 1.4
+          }}>
+            Lewy panel pokazuje tylko kandydatów do pracy. Odrzucone spółki nie są wyświetlane.
+          </div>
+
+          {list.map(s => (
+            <Card
+              key={s.ticker}
+              stock={s}
+              selected={selectedStock?.ticker === s.ticker}
+              onClick={() => setSelected(s.ticker)}
+            />
+          ))}
+        </div>
+
+        {selectedStock && (
+          <div style={{
+            position: "sticky",
+            top: 8,
+            maxHeight: "calc(100vh - 20px)",
+            overflow: "auto"
+          }}>
+            <div style={{ display: "grid", gridTemplateColumns: "280px 1fr", gap: 8, marginBottom: 8 }}>
+              <div style={{
+                background: C.panel,
+                border: `1px solid ${C.border}`,
+                borderRadius: 6,
+                padding: 12
+              }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "baseline", marginBottom: 8 }}>
+                  <div style={{ fontSize: 26, fontWeight: 950 }}>{selectedStock.ticker}</div>
+                  <div style={{
+                    color: selectedStock.playStatus === "KUP TERAZ" ? C.green : C.yellow,
+                    border: `1px solid ${selectedStock.playStatus === "KUP TERAZ" ? C.green : C.yellow}`,
+                    borderRadius: 999,
+                    padding: "3px 8px",
+                    fontSize: 10,
+                    fontWeight: 900
+                  }}>
+                    {selectedStock.playStatus}
+                  </div>
+                </div>
+
+                <div style={{ color: C.dim, fontSize: 11, marginBottom: 10 }}>
+                  {selectedStock.name}
+                </div>
+
+                <div style={{
+                  background: C.bg,
+                  border: `1px solid ${C.border}`,
+                  borderRadius: 6,
+                  padding: 9,
+                  marginBottom: 9
+                }}>
+                  <div style={{ color: C.dim, fontSize: 10, fontWeight: 900, marginBottom: 4 }}>
+                    KOMENTARZ
+                  </div>
+                  <div style={{ color: verdictColor(selectedStock.verdict), fontSize: 12, lineHeight: 1.35 }}>
+                    {selectedStock.reason}
+                  </div>
+                </div>
+
+                <div style={{
+                  background: C.bg,
+                  border: `1px solid ${C.border}`,
+                  borderRadius: 6,
+                  padding: 9,
+                  textAlign: "center"
+                }}>
+                  <div style={{ color: C.dim, fontSize: 10, fontWeight: 900 }}>PROPONOWANY STOP</div>
+                  <div style={{ color: C.red, fontSize: 22, fontWeight: 950 }}>
+                    {fmt(selectedStock.stopLoss, 2)}
+                  </div>
+                  <div style={{ color: C.dim, fontSize: 10 }}>
+                    −{fmt(selectedStock.riskToStop, 1)}%
+                  </div>
+                </div>
+              </div>
+
+              <div style={{
+                background: C.panel,
+                border: `1px solid ${C.border}`,
+                borderRadius: 6,
+                padding: 12
+              }}>
+                <div style={{ color: C.faint, fontSize: 10, fontWeight: 900, marginBottom: 7 }}>
+                  PARAMETRY
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "0 18px" }}>
+                  <Metric label="Cena" value={`${fmt(selectedStock.price, 2)} USD`} />
+                  <Metric label="Score" value={selectedStock.score} color={C.cyan} />
+                  <Metric label="Stage" value={`Stage ${selectedStock.stage}`} color={selectedStock.stage === 2 ? C.green : C.red} />
+                  <Metric label="Mansfield RS" value={fmt(selectedStock.mansfield, 2)} color={selectedStock.mansfield > 0 ? C.green : C.red} />
+                  <Metric label="Sektor" value={selectedStock.sectorTrend || "—"} color={selectedStock.sectorTrend === "ON" ? C.green : selectedStock.sectorTrend === "OFF" ? C.red : C.yellow} />
+                  <Metric label="Pivot" value={fmt(selectedStock.pivot, 2)} />
+                  <Metric label="Odległość od pivotu" value={pct(selectedStock.dist, 2)} color={selectedStock.dist >= 0 ? C.green : C.yellow} />
+                  <Metric label="Strefa wybicia" value={`${fmt(selectedStock.pivot, 2)} – ${fmt(selectedStock.pivot * (1 + t.pivotZone / 100), 2)}`} />
+                  <Metric label="Breakout volume" value={`${fmt(selectedStock.breakoutVol, 2)}×`} color={selectedStock.breakoutVol >= t.minVol ? C.green : C.red} />
+                  <Metric label="Baza" value={`${fmt(selectedStock.base, 1)}%`} color={selectedStock.base <= t.maxBase ? C.green : C.red} />
+                  <Metric label="ADR" value={`${fmt(selectedStock.adr, 1)}%`} />
+                  <Metric label="Ryzyko do stopa" value={`${fmt(selectedStock.riskToStop, 1)}%`} color={selectedStock.riskToStop <= t.maxRisk ? C.green : C.red} />
+                </div>
+              </div>
+            </div>
+
+            <div style={{
+              background: C.panel,
+              border: `1px solid ${C.border}`,
+              borderRadius: 6,
+              padding: 10,
+              marginBottom: 8
+            }}>
+              <Chart stock={selectedStock} />
+            </div>
+
+            <div style={{
+              background: C.panel,
+              border: `1px solid ${C.border}`,
+              borderRadius: 6,
+              padding: 12
+            }}>
+              <div style={{ color: C.faint, fontSize: 10, fontWeight: 900, marginBottom: 8 }}>
+                CHECKLISTA AUTOMATU
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "0 18px" }}>
+                {Object.entries(selectedStock.checks).map(([key, c]) => (
+                  <div key={key} style={{
+                    display: "flex",
+                    gap: 8,
+                    alignItems: "center",
+                    borderBottom: `1px solid ${C.grid}`,
+                    padding: "5px 0",
+                    fontSize: 12
+                  }}>
+                    <span style={{ color: c.ok ? C.green : C.red, fontWeight: 950 }}>
+                      {c.ok ? "✓" : "✕"}
+                    </span>
+                    <span style={{ color: C.mid, flex: 1 }}>{c.label}</span>
+                    <strong style={{ color: c.ok ? C.green : C.red }}>{c.value}</strong>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function buttonStyle(active, color) {
+  return {
+    background: active ? "#16202e" : C.head,
+    color,
+    border: "none",
+    borderLeft: `1px solid ${C.border}`,
+    padding: "8px 15px",
+    cursor: "pointer",
+    fontFamily: "inherit",
+    minWidth: 105
+  };
+}
+
+function MarketLine({ label, m }) {
+  const x = m || {};
+  const up = safeNum(x.change) >= 0;
+
+  return (
+    <div style={{ display: "flex", gap: 8, alignItems: "baseline", marginTop: 3 }}>
+      <span style={{ color: C.mid, fontSize: 12, width: 32 }}>{label}</span>
+      <strong style={{ color: C.txt, fontSize: 14 }}>{fmt(x.price, 2)}</strong>
+      <span style={{ color: up ? C.green : C.red, fontSize: 12 }}>
+        {up ? "▲" : "▼"} {fmt(Math.abs(safeNum(x.change)), 2)}%
+      </span>
+      <span style={{ color: x.aboveSMA30 ? C.green : C.red, fontSize: 10 }}>
+        {x.aboveSMA30 ? "NAD SMA30" : "POD SMA30"}
+      </span>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
 </body>
 </html>
