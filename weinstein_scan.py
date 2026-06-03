@@ -986,7 +986,6 @@ if __name__ == "__main__":
     "Materials": "XLB",
     "Real Estate": "XLRE",
     "Utilities": "XLU",
-}
 
 ETFS = sorted(set(SECTOR_ETF.values()))
 
