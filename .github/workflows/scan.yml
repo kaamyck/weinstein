@@ -22,6 +22,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Show files
         run: |
@@ -39,6 +40,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install yfinance pandas lxml html5lib beautifulsoup4 requests
+
+      - name: Check scanner syntax
+        run: |
+          python -m py_compile weinstein_scan.py
 
       - name: Run Weinstein scanner full universe
         run: |
@@ -70,16 +75,18 @@ jobs:
           git config user.email "github-actions@github.com"
 
           git status
-
           git add data.json
 
           if git diff --cached --quiet; then
-            echo "No changes in data.json to commit."
+            echo "No changes to commit"
             exit 0
           fi
 
           git commit -m "Update data.json"
 
-          git pull --rebase origin main
+          git pull --rebase=false origin main || true
 
-          git push origin HEAD:main
+          git add data.json
+          git commit -m "Update data.json after sync" || true
+
+          git push origin main || git push origin HEAD:main --force-with-lease
